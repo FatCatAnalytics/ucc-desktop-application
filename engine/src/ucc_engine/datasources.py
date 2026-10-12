@@ -107,7 +107,7 @@ class CsvDataSource:
                 out["inputs"][name] = {"present": False, "error": f"file not found: {p}"}
                 continue
             try:
-                head = pd.read_csv(p, sep=detect_delimiter(str(p)), encoding=_ENCODING, nrows=5)
+                head = pd.read_csv(p, sep=detect_delimiter(str(p)), encoding=_ENCODING, nrows=8)
                 cols = [str(c) for c in head.columns]
                 out["inputs"][name] = {
                     "present": True,
@@ -188,7 +188,7 @@ class SqlDataSource:
                 out["inputs"][name] = {"present": False}
                 continue
             try:
-                head = self._frame(q, chunksize=5)
+                head = self._frame(q, chunksize=8)
                 cols = [str(c) for c in head.columns]
                 out["inputs"][name] = {
                     "present": True, "columns": cols,

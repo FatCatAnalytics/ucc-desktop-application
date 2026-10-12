@@ -98,7 +98,7 @@ export function PipelineView({ client, health, run, onStarted, onUpdate, onNewRu
     }
   });
   const [defaults, setDefaults] = useState<Record<string, unknown>>({});
-  const [busy, setBusy] = useState<"" | "preview" | "start">("");
+  const [busy, setBusy] = useState<"" | "start">("");
   const [error, setError] = useState<string | null>(null);
 
   const editable = run === null;
@@ -166,17 +166,19 @@ export function PipelineView({ client, health, run, onStarted, onUpdate, onNewRu
 
   const ready = !!(csv.ucc_path && csv.master_path);
 
-  const doPreview = async () => {
-    setBusy("preview");
-    setError(null);
-    try {
-      setPreview(await client.previewSource(csv));
-    } catch (e) {
-      setError(describeError(e));
-    } finally {
-      setBusy("");
-    }
-  };
+  // Preview the inputs (columns + first rows) whenever they change, and for a selected run.
+  const previewSpec: SourceSpec | null = run ? run.source : (csv.ucc_path || csv.master_path || csv.universe_path) ? csv : null;
+  const previewKey = previewSpec ? JSON.stringify(previewSpec) : "";
+  useEffect(() => {
+    if (!previewSpec) { setPreview(null); return; }
+    let alive = true;
+    const t = setTimeout(() => {
+      client.previewSource(previewSpec)
+        .then((p) => { if (alive) setPreview(p); })
+        .catch((e) => { if (alive) setError(describeError(e)); });
+    }, 350);
+    return () => { alive = false; clearTimeout(t); };
+  }, [client, previewKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const doStart = async () => {
     setBusy("start");
     setError(null);
@@ -359,12 +361,14 @@ export function PipelineView({ client, health, run, onStarted, onUpdate, onNewRu
       <section className="card panel">
         {panel === "ingest" && (
           editable ? (
-            <IngestPanel client={client} ready={ready} busy={busy} preview={preview} name={name} setName={setName}
+            <IngestPanel client={client} preview={preview} name={name} setName={setName}
               sample={sample} setSample={setSample} advanced={advanced} setAdvanced={setAdvanced}
-              overrides={overrides} defaults={defaults} updateOverride={updateOverride} activeOverrides={activeOverrides}
-              onPreview={doPreview} />
+              overrides={overrides} defaults={defaults} updateOverride={updateOverride} activeOverrides={activeOverrides} />
           ) : (
-            <StagePanel title="Ingest" stages={stages.filter((s) => NODE_STAGES.ingest.includes(s.name))} logs={logs} run={run!} />
+            <>
+              <InputPreviews preview={preview} />
+              <StagePanel title="Ingest" stages={stages.filter((s) => NODE_STAGES.ingest.includes(s.name))} logs={logs} run={run!} />
+            </>
           )
         )}
         {panel === "direct" && run && (
@@ -472,11 +476,9 @@ function DropZone({ slot, title, hint, required, path, hovering, editable, statu
       <div className="dz-title">
         {title}{required ? "" : <span className="muted"> · optional</span>}
       </div>
-      {path ? (
+      {path ? (<>
         <div className="dz-file" title={path}>
           <span className="dz-name">{basename(path)}</span>
-          {status?.rows != null && <span className="muted small"> · {status.rows.toLocaleString()} rows</span>}
-          {bad && <span className="bad small"> · {status?.error ?? `missing ${status?.missing_columns?.join(", ")}`}</span>}
           {editable && (
             <span className="dz-actions">
               <button type="button" className="link small" onClick={(e) => { e.stopPropagation(); onBrowse(); }}>change</button>
@@ -484,7 +486,13 @@ function DropZone({ slot, title, hint, required, path, hovering, editable, statu
             </span>
           )}
         </div>
-      ) : native.inTauri || !editable ? (
+        {(status?.rows != null || bad) && (
+          <div className="dz-meta small">
+            {status?.rows != null && <span className="muted">{status.rows.toLocaleString()} rows</span>}
+            {bad && <span className="bad"> · {status?.error ?? `missing ${status?.missing_columns?.join(", ")}`}</span>}
+          </div>
+        )}
+      </>) : native.inTauri || !editable ? (
         <div className="dz-empty muted small">drop {hint} here, or click to browse</div>
       ) : (
         <input className="dz-input" placeholder={`path to ${hint}`} onClick={(e) => e.stopPropagation()}
@@ -497,11 +505,11 @@ function DropZone({ slot, title, hint, required, path, hovering, editable, statu
 
 // ============================================================================
 function IngestPanel(p: {
-  client: EngineClient; ready: boolean; busy: string; preview: SourcePreview | null;
+  client: EngineClient; preview: SourcePreview | null;
   name: string; setName: (v: string) => void; sample: number; setSample: (v: number) => void;
   advanced: boolean; setAdvanced: (v: boolean) => void;
   overrides: Record<string, string>; defaults: Record<string, unknown>; updateOverride: (k: string, v: string) => void;
-  activeOverrides: () => Record<string, string>; onPreview: () => void;
+  activeOverrides: () => Record<string, string>;
 }) {
   const thresholds: Array<[key: string, hint: string]> = [
     ["fuzzy_auto_threshold", "Fuzzy score (0–100) at or above which a match is high probability (auto)."],
@@ -518,10 +526,9 @@ function IngestPanel(p: {
   ];
   return (
     <>
+      <InputPreviews preview={p.preview} />
+
       <div className="row gap wrap">
-        <button className="btn" disabled={!p.ready || p.busy !== ""} onClick={p.onPreview}>
-          {p.busy === "preview" ? "Checking…" : "Check inputs"}
-        </button>
         <span className="grow" />
         <label className="field inline-field">
           <span>Run name</span>
@@ -532,27 +539,6 @@ function IngestPanel(p: {
           <input type="number" min={0} step={1000} value={p.sample} onChange={(e) => p.setSample(Number(e.target.value) || 0)} />
         </label>
       </div>
-
-      {p.preview && (
-        <table className="table compact">
-          <thead><tr><th>Input</th><th>Status</th><th>Rows</th><th>Columns</th></tr></thead>
-          <tbody>
-            {SLOTS.map((s) => {
-              const x = p.preview!.inputs[s.slot];
-              const ok = x.present && !x.error && (x.missing_columns?.length ?? 0) === 0;
-              return (
-                <tr key={s.slot}>
-                  <td>{s.title}</td>
-                  <td>{!x.present ? <span className="muted">not provided</span> : x.error ? <span className="bad">{x.error}</span>
-                    : ok ? <span className="good">OK</span> : <span className="bad">missing: {x.missing_columns?.join(", ")}</span>}</td>
-                  <td>{x.rows?.toLocaleString() ?? "—"}</td>
-                  <td className="muted small">{x.columns?.join(", ")}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
 
       <ModelsCard client={p.client} share={p.overrides.model_share_dir ?? ""} setShare={(v) => p.updateOverride("model_share_dir", v)}
         overrides={p.activeOverrides()} />
@@ -583,6 +569,68 @@ function IngestPanel(p: {
         </>
       )}
     </>
+  );
+}
+
+// ============================================================================
+/** What came in: one card per input file with its columns and first rows. */
+function InputPreviews({ preview }: { preview: SourcePreview | null }) {
+  const [open, setOpen] = useState<Slot | null>("ucc");
+  const required: Record<Slot, string[]> = {
+    ucc: ["DEBT_STATE", "SECP_STATE", "SECP_NAME"],
+    master: ["DEBT_STATE", "SECP_STATE", "SECP_NAME", "SECP_NAME_MAPPED", "Firm ID"],
+    universe: ["Bank Name", "Firm ID"],
+  };
+  const present = SLOTS.filter((s) => preview?.inputs[s.slot]?.present);
+  if (!preview || present.length === 0) {
+    return <p className="muted small" style={{ margin: 0 }}>No input files yet — drop them on the Ingest step to see their columns and first rows here.</p>;
+  }
+  const mb = (n?: number) => (n == null ? "" : n > 1_048_576 ? `${(n / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+  return (
+    <div className="input-previews">
+      {present.map((s) => {
+        const x = preview.inputs[s.slot];
+        const missing = x.missing_columns ?? [];
+        const ok = !x.error && missing.length === 0;
+        const isOpen = open === s.slot;
+        const cols = x.columns ?? [];
+        return (
+          <section key={s.slot} className={`input-card ${ok ? "ok" : "bad"} ${isOpen ? "open" : ""}`}>
+            <div className="input-head" onClick={() => setOpen(isOpen ? null : s.slot)}>
+              <span className="bank-caret">{isOpen ? "▾" : "▸"}</span>
+              <span className="input-title">{s.title}</span>
+              <span className="input-file" title={x.path}>{x.path ? basename(x.path) : ""}</span>
+              <span className="muted small input-meta">
+                {x.rows != null ? `${x.rows.toLocaleString()} rows` : ""}{x.size_bytes ? ` · ${mb(x.size_bytes)}` : ""}{cols.length ? ` · ${cols.length} columns` : ""}
+              </span>
+              <span className={`pill ${ok ? "approved" : "rejected"}`}>
+                {x.error ? "cannot read" : missing.length ? `missing ${missing.join(", ")}` : "ready"}
+              </span>
+            </div>
+            {isOpen && (
+              x.error ? <p className="small bad" style={{ margin: "0 12px 10px" }}>{x.error}</p> : (
+                <div className="table-wrap inset">
+                  <table className="table compact preview">
+                    <thead>
+                      <tr>{cols.map((c) => <th key={c} className={required[s.slot].includes(c) ? "req" : ""} title={required[s.slot].includes(c) ? "used by the pipeline" : "carried through, not used for matching"}>{c}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {(x.preview ?? []).map((row, i) => (
+                        <tr key={i}>{cols.map((c) => <td key={c} title={row[c]}>{row[c]}</td>)}</tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="muted small" style={{ padding: "6px 10px" }}>
+                    First {x.preview?.length ?? 0} of {x.rows?.toLocaleString()} rows · <strong>bold</strong> columns are the ones the pipeline uses
+                    {x.path ? <> · <span className="mono">{x.path}</span></> : null}
+                  </div>
+                </div>
+              )
+            )}
+          </section>
+        );
+      })}
+    </div>
   );
 }
 
