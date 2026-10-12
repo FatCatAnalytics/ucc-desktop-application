@@ -52,7 +52,7 @@ jobs:
           uv venv --python 3.11 engine/.venv
           uv pip install --python engine/.venv/Scripts/python.exe -e "engine[build,sql,dev]"
 
-      - name: Engine tests (also fails if core/ is out of sync with assets.py)
+      - name: Engine tests (incl. the matching-quality hold-out on input/Master Mapping.csv)
         run: engine/.venv/Scripts/python.exe -m pytest -q engine/tests
 
       - name: Freeze sidecar

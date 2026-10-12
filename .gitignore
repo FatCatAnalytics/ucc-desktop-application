@@ -1,3 +1,28 @@
-# Virtual environment (root-level)
+# --- data produced locally ---------------------------------------------------
+output/*
+!output/README.md
+models/*
+!models/README.md
+input/ucc.csv
+input/ucc_*.csv
+
+# --- python ------------------------------------------------------------------
 .venv/
-.venv
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+engine/build/
+engine/dist/
+
+# --- node / tauri ------------------------------------------------------------
+desktop/node_modules/
+desktop/dist/
+desktop/tsconfig.tsbuildinfo
+desktop/src-tauri/target/
+desktop/src-tauri/gen/schemas/
+desktop/src-tauri/binaries/ucc-engine-*
+
+# --- os ----------------------------------------------------------------------
+.DS_Store

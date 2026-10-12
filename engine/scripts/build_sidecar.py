@@ -84,7 +84,14 @@ def write_dev_stub() -> int:
         return 2
     BINARIES.mkdir(parents=True, exist_ok=True)
     target = BINARIES / f"ucc-engine-{host_triple()}"
-    target.write_text(f'#!/bin/sh\n# dev stub - replaced by build_sidecar.py for release builds\nexec "{venv_exe}" "$@"\n')
+    # Development layout: runs / decisions under <repo>/output, models under <repo>/models.
+    # The packaged app sets neither, so it uses the per-user app-data folder (+ the network model share).
+    target.write_text(
+        "#!/bin/sh\n# dev stub - replaced by build_sidecar.py for release builds\n"
+        f'export UCC_ENGINE_HOME="${{UCC_ENGINE_HOME:-{REPO / "output"}}}"\n'
+        f'export UCC_MODELS_DIR="${{UCC_MODELS_DIR:-{REPO / "models"}}}"\n'
+        f'exec "{venv_exe}" "$@"\n'
+    )
     target.chmod(0o755)
     print(f"dev stub -> {target.relative_to(REPO)}  (runs {venv_exe.relative_to(REPO)})")
     return 0

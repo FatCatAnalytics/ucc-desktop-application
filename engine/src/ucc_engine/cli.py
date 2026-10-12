@@ -12,8 +12,8 @@
     ucc-engine prefetch-models [--set key=value ...]
         Download the embedding + reranker models into the local model cache.
 
-    ucc-engine sync-check
-        Verify ucc_engine/core is in sync with the Dagster project (dev only).
+    ucc-engine sync-models --share \\\\server\\share\\ucc-models
+        Copy the models from a network share into the local model folder.
 """
 from __future__ import annotations
 
@@ -132,18 +132,6 @@ def cmd_sync_models(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_sync_check(_: argparse.Namespace) -> int:
-    import runpy
-
-    script = Path(__file__).resolve().parents[2] / "scripts" / "sync_core.py"
-    sys.argv = [str(script), "--check"]
-    try:
-        runpy.run_path(str(script), run_name="__main__")
-    except SystemExit as e:
-        return int(e.code or 0)
-    return 0
-
-
 def main(argv: List[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="ucc-engine", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--version", action="version", version=__version__)
@@ -176,9 +164,6 @@ def main(argv: List[str] | None = None) -> int:
     m.add_argument("--share", default="", help="network share / UNC path holding the models (model_share_dir)")
     m.add_argument("--set", action="append", metavar="KEY=VALUE")
     m.set_defaults(fn=cmd_sync_models)
-
-    c = sub.add_parser("sync-check", help="verify core/ matches the Dagster assets.py")
-    c.set_defaults(fn=cmd_sync_check)
 
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")

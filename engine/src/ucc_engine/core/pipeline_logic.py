@@ -1,6 +1,3 @@
-# GENERATED FILE - DO NOT EDIT.
-# Source: ucc_mapping_project/ucc_mapping_project/assets.py
-# Regenerate with: python engine/scripts/sync_core.py
 
 # =============================================================================
 # DAGSTER ASSETS

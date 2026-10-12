@@ -4,11 +4,10 @@ Headless version of the UCC → master-mapping pipeline, with a local HTTP API.
 It is the backend ("sidecar") of the desktop app in `../desktop`, and also a
 plain CLI.
 
-* **Same logic as the Dagster project.** `src/ucc_engine/core/` is *generated*
-  from `ucc_mapping_project/.../assets.py` by `scripts/sync_core.py` (Dagster
-  decorators and the `SentenceTransformer(...)` loads are swapped for shims).
-  Never edit `core/` by hand - re-run the script when `assets.py` changes.
-  `pytest` fails if `core/` is stale.
+* **`src/ucc_engine/core/` is the matching pipeline** - normalisation, the
+  seven stages and the output writers. It began life as a Dagster project; the
+  Dagster decorators are now no-op shims in `compat.py` and the code is edited
+  here directly. `docs/PIPELINE_DOCUMENTATION.md` describes the stages.
 * **No Dagster, no network inference.** The two small models (the
   `bge-small-en-v1.5` embedder and the `ms-marco-MiniLM` cross-encoder) run on
   the local CPU through [`fastembed`](https://github.com/qdrant/fastembed)
@@ -41,7 +40,10 @@ ucc-engine serve --port 8765
 ```
 
 Runs live under the per-user app data dir (`~/Library/Application Support/ucc-engine/runs/<id>/`
-on macOS; override with `UCC_ENGINE_HOME`). Each run has `inputs/` (only when
+on macOS, `%LOCALAPPDATA%\ucc-engine` on Windows; override with `UCC_ENGINE_HOME`). In
+development the sidecar stub points `UCC_ENGINE_HOME` at `<repo>/output` and
+`UCC_MODELS_DIR` at `<repo>/models`, so everything a dev run produces stays in the
+repository folder. Each run has `inputs/` (only when
 sampled or from SQL), `outputs/` (the same files the Dagster `pipeline_outputs`
 asset writes, plus `updated_master_*.csv`, `merged_raw_with_firm_id_*.csv`,
 lead-bank files) and `run.json` (status, timings, summary, log tail).
@@ -128,8 +130,7 @@ is measured rather than guessed. Baseline (2026-10-12, seed 42):
 | before (`fuzzy_auto_threshold=96`, old normaliser) | 0.990 | 0.551 | 0.856 |
 | now (`=90`, pre-clean normaliser, order guardrail) | 0.990 | 0.719 | 0.867 |
 
-What changed, and why (all in `ucc_mapping_project/.../utils.py` + `constants.py`,
-synced into `core/`):
+What changed, and why (all in `core/utils.py` + `core/constants.py`):
 
 * `pre_clean_name()` runs before normalisation: drops parentheticals, picks the
   lender out of "X, A DIVISION OF Y" / "FDIC AS RECEIVER OF Y", keeps the current

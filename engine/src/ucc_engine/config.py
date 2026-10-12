@@ -61,7 +61,7 @@ class PipelineConfig:
     # per PC, not once per session, and a dropped share does not break a run
     # that already has the files locally. Nothing is ever downloaded when set.
     model_share_dir: str = ""
-    model_cache_dir: str = field(default_factory=lambda: str(app_data_dir() / "models"))
+    model_cache_dir: str = field(default_factory=lambda: os.environ.get("UCC_MODELS_DIR") or str(app_data_dir() / "models"))
     model_threads: int = 0                      # 0 = library default
 
     # --- matching thresholds --------------------------------------------------

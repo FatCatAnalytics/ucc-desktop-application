@@ -1,4 +1,3 @@
-# GENERATED FILE - DO NOT EDIT. Source: ucc_mapping_project/ucc_mapping_project/constants.py
 # =============================================================================
 # CONSTANTS
 # =============================================================================

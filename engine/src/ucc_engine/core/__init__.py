@@ -1,1 +1,1 @@
-"""Generated copy of the Dagster matching logic. See engine/scripts/sync_core.py."""
+"""The matching pipeline: normalisation, the seven stages, outputs (originally a Dagster project)."""

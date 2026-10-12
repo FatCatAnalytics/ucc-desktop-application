@@ -12,12 +12,6 @@ import pytest
 ENGINE = Path(__file__).resolve().parents[1]
 
 
-def test_core_is_in_sync_with_dagster_assets():
-    """core/ must be regenerated whenever assets.py changes."""
-    r = subprocess.run([sys.executable, str(ENGINE / "scripts" / "sync_core.py"), "--check"], capture_output=True, text=True)
-    assert r.returncode == 0, r.stdout + r.stderr
-
-
 def test_core_imports_without_dagster_or_torch():
     import ucc_engine.core.pipeline_logic as L
 

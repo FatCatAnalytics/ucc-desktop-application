@@ -8,7 +8,7 @@ the pre-clean normaliser landed; they are floors, so a change that quietly
 hurts matching fails here instead of in a client's updated master.
 
 Skipped when the Master Mapping file is not present (it is reference data in
-``ucc_mapping_project/ucc_mapping_project/Inputs/``).
+``input/`` at the repository root).
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import pandas as pd
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-MASTER = REPO / "ucc_mapping_project" / "ucc_mapping_project" / "Inputs" / "Master Mapping.csv"
+MASTER = REPO / "input" / "Master Mapping.csv"
 
 # Floors, not targets. Measured 2026-10-12 on 1,500 held-out names (seed 42):
 #   current normaliser:  auto@96 precision 0.990 recall 0.551
