@@ -36,8 +36,9 @@ class PreviewRequest(BaseModel):
 class DecisionItem(BaseModel):
     key: str = Field(..., description="`key` of a review-queue row")
     decision: Optional[Literal["approved", "rejected"]] = Field(None, description="null clears the decision")
-    mapped_name: Optional[str] = Field(None, description="override the suggested SECP_NAME_MAPPED")
+    mapped_name: Optional[str] = Field(None, description="override the suggested SECP_NAME_MAPPED (required when mapping an unmatched row by hand)")
     firm_id: Optional[Any] = Field(None, description="override the Firm ID (default: Universe lookup by mapped name)")
+    all_states: bool = Field(False, description="manual mapping only: also apply to this filer name wherever it is unmatched, now and in later runs")
 
 
 class DecisionsRequest(BaseModel):
@@ -180,6 +181,19 @@ def create_app(store: Optional[RunStore] = None) -> FastAPI:
     ) -> Dict[str, Any]:
         return _get(run_id).review(confidence=confidence, search=search, method=method, offset=offset,
                                    limit=limit, sort=sort, descending=descending, decision=decision, mapped=mapped)
+
+    @app.get("/runs/{run_id}/banks")
+    def runs_banks(run_id: str) -> List[Dict[str, Any]]:
+        """Banks a filer can be mapped to by hand: the Universe plus the master's mapped names."""
+        return _get(run_id).banks()
+
+    @app.get("/runs/{run_id}/master")
+    def runs_master(
+        run_id: str, source: str = Query("added", description="original | added | an exact _source value"),
+        search: str = "", offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000),
+    ) -> Dict[str, Any]:
+        """The updated master with provenance: what came in, what this run / reviewers added."""
+        return _get(run_id).master_rows(source=source, search=search, offset=offset, limit=limit)
 
     @app.get("/runs/{run_id}/review/groups")
     def runs_review_groups(

@@ -461,3 +461,99 @@ def test_decisions_propagate_across_state_pairs_and_spellings(tmp_path: Path):
     run.set_decisions([{"key": rows["TX"]["key"], "decision": None}])
     assert {r["DEBT_STATE"]: r["decision"] for r in run.review()["rows"]}["TX"] is None
     assert [h["action"] for h in run.decisions.history(rows["NY"]["key"])][-1].startswith("approved (inherited:")
+
+
+def test_manual_mapping_of_unmatched_rows(tmp_path: Path):
+    """An unmatched filer can be mapped by hand to a bank from the Universe; 'all states'
+    spreads it to the same filer name elsewhere; it reaches the updated master; the
+    provenance view shows what came in vs what was added."""
+    from ucc_engine.config import PipelineConfig
+    from ucc_engine.datasources import CsvSourceSpec
+    from ucc_engine.runner import PipelineRun
+
+    universe = tmp_path / "universe.csv"
+    universe.write_text("Bank Name,Firm ID\nJPMorgan,7\nUS Bank,8\n")
+    spec = CsvSourceSpec(ucc_path=str(tmp_path / "u.csv"), master_path=str(tmp_path / "m.csv"), universe_path=str(universe))
+    run = PipelineRun(spec, PipelineConfig(), runs_root=tmp_path / "runs", name="m")
+    run.config.universe_file = str(universe)
+    run.status = "succeeded"
+    results = pd.DataFrame({
+        "DEBT_STATE": ["NY", "TX", "CA", "FL"], "SECP_STATE": ["TX", "TX", "TX", "FL"],
+        "SECP_NAME": ["JPMORGAN CHASE BANK, N.A., TORONTO BRANCH", "JPMORGAN CHASE BANK NA TORONTO BRANCH", "ACME WIDGETS LLC", "KNOWN"],
+        "SECP_NAME_NORMALIZED": ["JPMORGAN CHASE BANK", "JPMORGAN CHASE BANK", "ACME WIDGETS", "KNOWN"],
+        "SECP_NAME_MAPPED": [None, None, None, "Known"],
+        "match_method": [None, None, None, "Exact Match (Raw)"], "match_score": [None, None, None, 1.0],
+        "confidence": ["NEW_ENTITY", "NEW_ENTITY", "NEW_ENTITY", "AUTO"], "Firm_ID": [None, None, None, 5],
+    })
+    run._cache["universe_enriched_results"] = results
+    master = pd.DataFrame({"DEBT_STATE": ["FL"], "SECP_STATE": ["FL"], "SECP_NAME": ["KNOWN"],
+                           "SECP_NAME_MAPPED": ["Known"], "Firm ID": [5], "_source": ["original_master"]})
+    run._cache["updated_master_data"] = master
+    run.output_dir.mkdir(parents=True, exist_ok=True)
+    master.to_csv(run.output_dir / "updated_master_20260101_000000_with_source.csv", index=False)
+    run.summary = run._build_summary()
+
+    banks = run.banks()
+    assert [b["name"] for b in banks] == ["JPMorgan", "Known", "US Bank"] and banks[0]["firm_id"] == 7
+
+    page = run.rows(bucket="unmatched")
+    assert page["total"] == 3 and all(r["decision"] is None for r in page["rows"])
+    ny = next(r for r in page["rows"] if r["DEBT_STATE"] == "NY")
+
+    # can't reject an unmatched row, and a mapping needs a bank
+    with pytest.raises(ValueError):
+        run.set_decisions([{"key": ny["key"], "decision": "rejected"}])
+    with pytest.raises(ValueError):
+        run.set_decisions([{"key": ny["key"], "decision": "approved"}])
+
+    out = run.set_decisions([{"key": ny["key"], "decision": "approved", "mapped_name": "JPMorgan", "all_states": True}])
+    assert out["changed"] == 1 and out["inherited"]["approved"] == 1  # the TX spelling variant inherited it
+    rows = {r["DEBT_STATE"]: r for r in run.rows(bucket="unmatched")["rows"]}
+    assert rows["NY"]["decision"] == "approved" and rows["NY"]["decided_mapped_name"] == "JPMorgan" and rows["NY"]["decided_firm_id"] == 7
+    assert rows["TX"]["decision"] == "approved" and str(rows["TX"]["decision_source"]).startswith("inherited:")
+    assert rows["CA"]["decision"] is None
+    assert run.decisions.get(ny["key"])["match_method"] == "Manual (all states)"
+
+    # a key-only mapping does not spread
+    ca = rows["CA"]
+    run.set_decisions([{"key": ca["key"], "decision": "approved", "mapped_name": "US Bank"}])
+    assert run.decisions.get(ca["key"])["match_method"] == "Manual"
+
+    # manual mappings reach the updated master and the provenance view shows them as added
+    res = run.apply_decisions()
+    assert res["added"] == 3
+    prov = run.master_rows(source="added")
+    assert prov["total"] == 3 and prov["by_source"] == {"original_master": 1, "reviewed_approved": 3}
+    assert run.master_rows(source="original")["total"] == 1
+    assert {r["SECP_NAME_MAPPED"] for r in prov["rows"]} == {"JPMorgan", "US Bank"}
+
+
+def test_stage_2b_matches_a_national_bank_across_state_pairs_into_review():
+    """A normalised name that exists in the master only under OTHER state pairs, and maps
+    to a single bank nationally, becomes a review suggestion; names that map to several
+    banks (state-dependent) do not."""
+    from ucc_engine.compat import AssetExecutionContext
+    from ucc_engine.core import pipeline_logic as L
+
+    ctx = AssetExecutionContext("t", sink=lambda *_: None)
+    master = pd.DataFrame({
+        "DEBT_STATE": ["CA", "NY", "GA", "NE"], "SECP_STATE": ["CA", "NY", "GA", "NE"],
+        "SECP_NAME": ["U.S. BANK TRUST COMPANY, NATIONAL ASSOCIATION", "US BANK TRUST COMPANY NA", "PINNACLE BANK", "PINNACLE BANK"],
+        "SECP_NAME_MAPPED": ["US Bank", "US Bank", "Pinnacle Bank (GA)", "Pinnacle Bank (NE)"], "Firm ID": [8, 8, 2, 3],
+    })
+    norm = L.normalized_master_data(ctx, master)
+    assert norm["global_norm_to_mapped"]["US BANK TRUST"][0] == "US Bank"
+    assert "PINNACLE BANK" not in norm["global_norm_to_mapped"]
+
+    ucc = pd.DataFrame({
+        "DEBT_STATE": ["AR", "AR", "TX"], "SECP_STATE": ["IL", "IL", "TX"],
+        "SECP_NAME": ["US BANK TRUST COMPANY NA AS COLLATERAL AGENT", "PINNACLE BANK", "SOMETHING ELSE LLC"],
+    })
+    for c in ("SECP_NAME_MAPPED", "matched_master_raw", "Firm_ID", "match_score", "match_method", "confidence", "ambiguous_master_candidates"):
+        ucc[c] = None
+    out = L.exact_match_normalized_results(ctx, L.exact_match_raw_results(ctx, ucc, norm), norm)
+    us = out.iloc[0]
+    assert us["SECP_NAME_MAPPED"] == "US Bank" and us["confidence"] == "REVIEW_HIGH"
+    assert us["match_method"] == "Exact Match (Normalized - Other State)" and us["Firm_ID"] == 8
+    assert pd.isna(out.iloc[1]["SECP_NAME_MAPPED"]), "state-dependent names must not match across states"
+    assert pd.isna(out.iloc[2]["SECP_NAME_MAPPED"])

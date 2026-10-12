@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  ApplyResult, Bucket, DecisionCounts, DecisionItem, DecisionsPage, Health, LogLine, ModelsStatus, ModelsSync, OutputFile, Page, ReviewGroup, RunSnapshot,
+  ApplyResult, Bank, Bucket, DecisionCounts, DecisionItem, DecisionsPage, Health, LogLine, ModelsStatus, ModelsSync, OutputFile, Page, ReviewGroup, RunSnapshot,
   SourcePreview, SourceSpec, StoreCounts, Summary,
 } from "./types";
 
@@ -112,6 +112,17 @@ export class EngineClient {
     return this.req<Page>(`/runs/${id}/clusters?${p}`);
   };
 
+  /** Banks a filer can be mapped to by hand (Universe + the master's banks). */
+  banks = (id: string) => this.req<Bank[]>(`/runs/${id}/banks`);
+  /** The updated master with provenance: what came in vs what was added. */
+  masterRows = (id: string, q: { source?: string; search?: string; offset?: number; limit?: number }) => {
+    const p = new URLSearchParams();
+    p.set("source", q.source ?? "added");
+    if (q.search) p.set("search", q.search);
+    p.set("offset", String(q.offset ?? 0));
+    p.set("limit", String(q.limit ?? 100));
+    return this.req<Page & { by_source: Record<string, number> }>(`/runs/${id}/master?${p}`);
+  };
   /** The review queue rolled up by suggested bank, biggest first. */
   reviewGroups = (id: string, q: { decision?: string; search?: string }) => {
     const p = new URLSearchParams();

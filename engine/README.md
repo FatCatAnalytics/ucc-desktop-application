@@ -114,6 +114,13 @@ database shared by every run, `<engine home>/decisions.sqlite` (tables
   `GET /runs/{id}/review/groups` rolls the queue up by suggested bank, biggest
   first, and `review?mapped=<bank>` pages one bank's rows - the desktop app's
   *By bank* view approves a whole block at once.
+- **Unmatched rows can be mapped by hand** (`GET /runs/{id}/banks` lists the Universe
+  + the master's banks; `PUT decisions` with `mapped_name` on an unmatched key). With
+  `all_states: true` the mapping is inherited by the same filer name wherever it is
+  unmatched, now and in later runs (`match_method = "Manual (all states)"`); without
+  it, it sticks to its key. Mapped rows reach the updated master like approvals.
+- `GET /runs/{id}/master?source=original|added|<_source>` pages the updated master with
+  provenance: what came in as the mapping vs what the pipeline / reviewers added.
 - A per-run `decisions.json` from older engine versions is imported into the
   database the first time the run is loaded (renamed `.json.imported`).
 
@@ -138,6 +145,19 @@ What changed, and why (all in `core/utils.py` + `core/constants.py`):
   capacity tails the role regex missed ("AS ADMINISTRIVE AGENT", ", A TEXAS STATE
   BANKING ASSOCIATION", "NOT IN ITS INDIVIDUAL CAPACITY ..."), strips branch
   qualifiers ("PARK BANK- BROOKFIELD") and mid-string charter words (N.A., FSB).
+* **Stage 2b** (in `exact_match_normalized_results`): a normalised name that is in the
+  master only under *other* state pairs and maps to one bank nationally becomes a
+  review suggestion (`Exact Match (Normalized - Other State)`). Never auto: a name
+  that maps to one bank today may only be the first of that name seen. Names that
+  map to several banks (PINNACLE BANK) are skipped. Tonight's run: 1,662 filings /
+  194 names (HSBC, KeyBank, US Bank Trust, ...).
+* Split initialisms are joined after normalisation (`U.S. BANK` = `U S BANK` =
+  `US BANK`, `J.P. MORGAN` = `JP MORGAN`); branch qualifiers (`TORONTO BRANCH`),
+  `C/O ...` and typo'd `SUCESSOR IN ITEREST` tails are stripped. Hold-out recall at
+  auto: 0.719 -> 0.769, precision unchanged.
+* The updated master takes **AUTO rows of any method** (it used to take a list of
+  match methods, which let unreviewed `Fuzzy Match (Ambiguous)` rows in and kept AUTO
+  `Advanced Match` rows out).
 * Guardrail 6 in `combined_fuzzy_score`: same words in a different order
   ("NATIONAL CITY BANK" vs "CITY NATIONAL BANK") no longer reach the review floor
   on fuzzy alone.

@@ -22,6 +22,7 @@ from .constants import (
     CAPACITY_TAIL_RE,
     CHARTER_MID_RE,
     BRANCH_TAIL_RE,
+    BRANCH_OF_RE,
 )
 
 # =============================================================================
@@ -110,6 +111,7 @@ def pre_clean_name(name: str) -> str:
         s = s[m.end():].split(",", 1)[0]
     s = PREDECESSOR_TAIL_RE.sub("", s)
     s = CAPACITY_TAIL_RE.sub("", s)
+    s = BRANCH_OF_RE.sub("", s)
     s = BRANCH_TAIL_RE.sub(r"\1", s)
     s = CHARTER_MID_RE.sub("", s)
     s = re.sub(r"\s+", " ", s).strip(" ,;:-")
@@ -147,6 +149,12 @@ def normalize_name(name: str) -> str:
     # Strip non-alphanumeric (keep spaces), collapse whitespace
     name = re.sub(r'[^\w\s]', ' ', name)
     name = re.sub(r'\s+', ' ', name)
+    # Join split initialisms so "U.S. BANK" / "U S BANK" / "US BANK" agree ("J P MORGAN" -> "JP MORGAN")
+    while True:
+        joined = re.sub(r'\b([A-Z]) (?=[A-Z]\b)', r'\1', name)
+        if joined == name:
+            break
+        name = joined
     name = name.strip()
     
     return name

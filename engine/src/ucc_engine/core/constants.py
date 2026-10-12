@@ -63,10 +63,15 @@ RECEIVER_OF_RE = re.compile(r"(?i)^.*?\bAS\s+RECEIVER\s+(?:OF|FOR)\s+(?:THE\s+)?
 PREDECESSOR_TAIL_RE = re.compile(
     r"(?i)[\s,]*\b(?:"
     r"(?:AS\s+)?SUC+ES+OR(?:S)?(?:[\s-]+(?:BY|IN)[\s-]+(?:MERGER|INTEREST|CONVERSION)(?:[\s-]+(?:BY[\s-]+MERGER|IN[\s-]+INTEREST))?)?[\s-]+(?:TO|WITH|OF)"
+    r"|SUC+ES+OR(?:S)?[\s-]+(?:IN|BY)\b"          # typo-tolerant: 'SUCESSOR IN ITEREST TOTHE ...'
     r"|F/?K/?A|N/?K/?A|FORMERLY\s+KNOWN\s+AS|NOW\s+KNOWN\s+AS"
     r"|D/?B/?A|DOING\s+BUSINESS\s+AS"
+    r"|C/O|IN\s+CARE\s+OF"                         # 'C/O TRACY DOWE'
     r")\b.*$"
 )
+
+# ", TORONTO BRANCH", "NEW YORK BRANCH" - a branch of the same legal entity.
+BRANCH_OF_RE = re.compile(r"(?i)[\s,]*\b(?:[A-Z.'-]+\s+){1,2}BRANCH\b")
 
 # Capacity / role tails that ROLE_TRIGGERS miss (typos, extra words, no "AS"):
 #   ", AS ADMINISTRIVE AGENT", "AS LOAN TRUSTEE", ", NOT IN ITS INDIVIDUAL CAPACITY ...",

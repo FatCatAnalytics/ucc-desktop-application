@@ -239,8 +239,20 @@ def normalized_master_data(
     for idx, state_pair in enumerate(state_pair_list):
         state_pair_to_indices.setdefault(state_pair, []).append(idx)
     
+    # Stage 2b lookup: normalised name -> the one bank it maps to across ALL state
+    # pairs (names that map to several banks nationally - PINNACLE BANK, FIRST BANK -
+    # are left out; they are state-dependent and must not match across states).
+    global_groups = master_df.groupby('SECP_NAME_NORMALIZED')
+    global_norm_to_mapped = {}
+    for norm, grp in global_groups:
+        banks = _unique_candidates(grp['SECP_NAME_MAPPED'])
+        if len(banks) == 1:
+            first = grp.iloc[0]
+            global_norm_to_mapped[norm] = (banks[0], first['SECP_NAME'], first['Firm ID'])
+
     # Create lookups
     result = {
+        'global_norm_to_mapped': global_norm_to_mapped,
         'raw_key_to_mapped': dict(zip(raw_dedup['_RAW_STATE_KEY'], raw_dedup['SECP_NAME_MAPPED'])),
         'raw_key_to_raw': dict(zip(raw_dedup['_RAW_STATE_KEY'], raw_dedup['SECP_NAME'])),
         'raw_key_to_firm_id': dict(zip(raw_dedup['_RAW_STATE_KEY'], raw_dedup['Firm ID'])),
@@ -553,6 +565,28 @@ def exact_match_normalized_results(
     matched = matched_mask.sum()
     ambiguous_count = ambiguous_mask.sum()
     context.log.info(f"Stage 2 - Exact Match (Normalized): {matched - ambiguous_count:,} auto + {ambiguous_count:,} ambiguous")
+
+    # Stage 2b: the same normalised name is in the master under ANOTHER state pair and
+    # maps to exactly one bank nationally (US BANK TRUST in AR->IL when the master only
+    # has it for other pairs). A suggestion for review, never auto: a name that maps to
+    # one bank today may just be the only one of that name seen so far.
+    global_norm = normalized_master_data.get('global_norm_to_mapped') or {}
+    if global_norm:
+        still = df['SECP_NAME_MAPPED'].isna()
+        hits = df.loc[still, 'SECP_NAME_NORMALIZED'].map(global_norm)
+        hits = hits[hits.notna()]
+        if len(hits):
+            idx = hits.index
+            df.loc[idx, 'SECP_NAME_MAPPED'] = [h[0] for h in hits]
+            df.loc[idx, 'matched_master_raw'] = [h[1] for h in hits]
+            df.loc[idx, 'Firm_ID'] = [h[2] for h in hits]
+            df.loc[idx, 'match_score'] = 1.0
+            df.loc[idx, 'match_method'] = 'Exact Match (Normalized - Other State)'
+            df.loc[idx, 'confidence'] = 'REVIEW_HIGH'
+            context.log.info(
+                f"Stage 2b - Exact Match (Normalized, other state pair): {len(hits):,} review suggestions "
+                f"({hits.map(lambda h: h[0]).nunique():,} banks)"
+            )
 
     remaining_unmatched = df['SECP_NAME_MAPPED'].isna()
     state_pairs = _state_pair_keys(df)
@@ -2179,14 +2213,12 @@ def universe_enriched_results(
 # visible in the updated master for review purposes.
 # =============================================================================
 
-_UPDATED_MASTER_MATCH_METHODS: tuple = (
-    "Exact Match (Raw)",
-    "Exact Match (Normalized)",
-    "Exact Match (Raw - State Ambiguous)",
-    "Exact Match (Normalized - Ambiguous)",
-    "Fuzzy Match",
-    "Fuzzy Match (Ambiguous)",
-)
+# Rows the pipeline may add to the updated master on its own: anything it accepted
+# (confidence AUTO, whatever the method). REVIEW_* rows are suggestions and reach the
+# master only through an approved review decision; NEW_ENTITY rows never do.
+# (Until 2026-10 this was a list of match methods, which let unreviewed
+# "Fuzzy Match (Ambiguous)" rows in and kept AUTO "Advanced Match" rows out.)
+_UPDATED_MASTER_CONFIDENCE: tuple = ("AUTO",)
 
 # Columns kept in the updated master file. Mirrors the original Master
 # Mapping CSV schema so the file is drop-in usable as the next run's master.
@@ -2259,7 +2291,11 @@ def updated_master_data(
         )
         eligible = enriched.iloc[0:0].copy()
     else:
-        method_mask = enriched["match_method"].isin(_UPDATED_MASTER_MATCH_METHODS)
+        method_mask = (
+            enriched["confidence"].astype("string").isin(_UPDATED_MASTER_CONFIDENCE)
+            if "confidence" in enriched.columns
+            else enriched["match_method"].astype("string").str.startswith("Exact Match", na=False)
+        )
         # Must also have a non-null mapped name to be useful as a master row.
         if "SECP_NAME_MAPPED" in enriched.columns:
             mapped_mask = (

@@ -377,6 +377,8 @@ class PipelineRun:
                 "rows": int(len(um)),
                 "original_rows": int(src.eq("original_master").sum()),
                 "added_rows": int(src.str.startswith("pipeline_").sum()),
+                "approved_rows": int(src.eq("reviewed_approved").sum()),
+                "by_source": {str(k): int(v) for k, v in src.value_counts().items()},
                 "file": self._latest("updated_master_*.csv", exclude="_with_source"),
             }
         lb = self._cache.get("lead_bank_designation")
@@ -448,7 +450,7 @@ class PipelineRun:
         df = self._enriched()
         if df is None:
             return {"total": 0, "offset": offset, "limit": limit, "columns": BUCKET_COLUMNS, "rows": []}
-        sub = df[bucket_series(df).eq(bucket)]
+        sub = self._bucket_rows(df, bucket)
         if search:
             s = search.strip()
             mask = sub["SECP_NAME"].astype(str).str.contains(s, case=False, na=False, regex=False)
@@ -457,9 +459,79 @@ class PipelineRun:
             sub = sub[mask]
         if sort in sub.columns:
             sub = sub.sort_values(sort, ascending=not descending, na_position="last")
-        cols = [c for c in BUCKET_COLUMNS if c in sub.columns]
+        elif bucket == "unmatched":
+            sub = sub.sort_values("filings", ascending=False)
+        cols = [c for c in BUCKET_COLUMNS if c in sub.columns] + ["key", "filings"]
+        page = sub.iloc[offset: offset + limit]
+        rows = frame_records(page[cols])
+        # Attach decisions (manual mappings on unmatched rows, approvals on review rows).
+        found = self.decisions.get_many(page["key"])
+        for row in rows:
+            d = found.get(row["key"])
+            row["decision"] = d["decision"] if d else None
+            row["decided_mapped_name"] = (d.get("mapped_name") or d.get("suggested")) if d else None
+            row["decided_firm_id"] = d.get("firm_id") if d else None
+            row["decision_source"] = d.get("source") if d else None
+            row["decided_in_run"] = d.get("run_id") if d else None
+        return {"total": int(len(sub)), "offset": offset, "limit": limit, "columns": cols + ["decision"],
+                "rows": rows, "decision_counts": self.decision_counts()}
+
+    def _bucket_rows(self, df: pd.DataFrame, bucket: str) -> pd.DataFrame:
+        """One row per key in a bucket, with ``key`` and ``filings`` (how many filings share it)."""
+        sub = df[bucket_series(df).eq(bucket)]
+        keys = self._keys(sub)
+        filings = keys.map(keys.value_counts())
+        return sub.assign(key=keys.values, filings=filings.values).drop_duplicates("key")
+
+    def banks(self) -> List[Dict[str, Any]]:
+        """Every bank a filer can be mapped to by hand: the Universe (name + Firm ID)
+        plus the banks the master already maps to."""
+        self._resolve_firm_id("_")  # loads the universe lookup (returns None for an unknown name)
+        out: Dict[str, Dict[str, Any]] = {}
+        names = getattr(self, "_universe_names", None) or {}
+        for name, fid in (self._universe_lookup or {}).items():
+            out[norm_name(name)] = {"name": names.get(name, name), "firm_id": fid, "source": "universe"}
+        # prefer the master's own spelling of the bank name where it has one
+        df = self._enriched()
+        um = self._master_with_source()
+        for frame in (um, df):
+            if frame is None or "SECP_NAME_MAPPED" not in frame.columns:
+                continue
+            fid_col = "Firm ID" if "Firm ID" in frame.columns else "Firm_ID" if "Firm_ID" in frame.columns else None
+            pairs = frame[["SECP_NAME_MAPPED", fid_col]].dropna(subset=["SECP_NAME_MAPPED"]).drop_duplicates("SECP_NAME_MAPPED") if fid_col else None
+            if pairs is None:
+                continue
+            for name, fid in zip(pairs["SECP_NAME_MAPPED"], pairs[fid_col]):
+                k = norm_name(name)
+                if not k:
+                    continue
+                cur = out.get(k)
+                out[k] = {"name": str(name).strip(), "firm_id": _json_safe(fid) if fid == fid else (cur or {}).get("firm_id"),
+                          "source": "master" if cur is None else cur["source"]}
+        return sorted(out.values(), key=lambda b: b["name"].lower())
+
+    def master_rows(self, *, source: str = "added", search: str = "", offset: int = 0, limit: int = 100) -> Dict[str, Any]:
+        """Page the updated master: ``source`` = ``original`` (came in as the master),
+        ``added`` (everything this run or a reviewer added) or one exact ``_source`` value."""
+        um = self._master_with_source()
+        if um is None:
+            return {"total": 0, "offset": offset, "limit": limit, "columns": [], "rows": [], "by_source": {}}
+        src = um["_source"].astype(str) if "_source" in um.columns else pd.Series("original_master", index=um.index)
+        by_source = {str(k): int(v) for k, v in src.value_counts().items()}
+        if source == "original":
+            sub = um[src.eq("original_master")]
+        elif source == "added":
+            sub = um[~src.eq("original_master")]
+        else:
+            sub = um[src.eq(source)]
+        if search.strip():
+            q = search.strip()
+            mask = sub["SECP_NAME"].astype(str).str.contains(q, case=False, na=False, regex=False)
+            mask |= sub["SECP_NAME_MAPPED"].astype(str).str.contains(q, case=False, na=False, regex=False)
+            sub = sub[mask]
+        cols = [c for c in (*MASTER_COLUMNS, "_source") if c in sub.columns]
         return {"total": int(len(sub)), "offset": offset, "limit": limit, "columns": cols,
-                "rows": frame_records(sub.iloc[offset: offset + limit][cols])}
+                "rows": frame_records(sub.iloc[offset: offset + limit][cols]), "by_source": by_source}
 
     # --------------------------------------------------------------- decisions
     @staticmethod
@@ -536,20 +608,39 @@ class PipelineRun:
         if missing:
             self.decisions.set_norm_names((m["key"], self._norm(m["secp_name"])) for m in missing)
         review = self._annotated_review()
-        pending = review[review["decision"].eq("pending") & ~review["key"].isin(self.decisions.cleared_keys())]
-        if pending.empty:
+        cleared = self.decisions.cleared_keys()
+        pending = review[review["decision"].eq("pending") & ~review["key"].isin(cleared)]
+        # Unmatched rows inherit only from manual mappings made "for all states".
+        enriched = self._enriched()
+        unmatched = self._bucket_rows(enriched, "unmatched") if enriched is not None else None
+        if unmatched is not None and len(unmatched):
+            decided = self.decisions.get_many(unmatched["key"])
+            unmatched = unmatched[~unmatched["key"].isin(decided.keys()) & ~unmatched["key"].isin(cleared)]
+        else:
+            unmatched = None
+        if pending.empty and (unmatched is None or unmatched.empty):
             return {"approved": 0, "rejected": 0, "candidates": 0}
         norms = pending["SECP_NAME"].map(self._norm)
-        pool = self.decisions.by_norm_name(norms.unique())
-        out = {"approved": 0, "rejected": 0, "candidates": int(sum(1 for n in norms if n in pool))}
-        for (_, row), nrm in zip(pending.iterrows(), norms):
-            suggested = _json_safe(row.get("SECP_NAME_MAPPED"))
-            want = norm_name(suggested)
-            if not want:
-                continue
-            # reviewer-made first, then most recent (by_norm_name is already newest-first)
-            matches = sorted((d for d in pool.get(nrm, []) if self._final_name(d) == want),
-                             key=lambda d: 0 if not d.get("source") else 1)
+        unorms = unmatched["SECP_NAME"].map(self._norm) if unmatched is not None else pd.Series(dtype=object)
+        pool = self.decisions.by_norm_name(list(norms.unique()) + list(unorms.unique()))
+        out = {"approved": 0, "rejected": 0, "candidates": int(sum(1 for n in norms if n in pool) + sum(1 for n in unorms if n in pool))}
+        # pending review rows first ...
+        work: List[tuple] = [(row, nrm, False) for (_, row), nrm in zip(pending.iterrows(), norms)]
+        if unmatched is not None:
+            work += [(row, nrm, True) for (_, row), nrm in zip(unmatched.iterrows(), unorms)]
+        for row, nrm, is_unmatched in work:
+            if is_unmatched:
+                matches = [d for d in pool.get(nrm, []) if d["decision"] == "approved"
+                           and str(d.get("match_method") or "").startswith("Manual (all states)")]
+                suggested = None
+            else:
+                suggested = _json_safe(row.get("SECP_NAME_MAPPED"))
+                want = norm_name(suggested)
+                if not want:
+                    continue
+                # reviewer-made first, then most recent (by_norm_name is already newest-first)
+                matches = sorted((d for d in pool.get(nrm, []) if self._final_name(d) == want),
+                                 key=lambda d: 0 if not d.get("source") else 1)
             if not matches:
                 continue
             d = matches[0]
@@ -558,9 +649,12 @@ class PipelineRun:
             if firm_id is None:
                 firm_id = _json_safe(row.get("Firm_ID"))
             self.decisions.set(
-                str(row["key"]), decision=d["decision"], mapped_name=d.get("mapped_name"), firm_id=firm_id,
-                suggested=suggested, match_method=_json_safe(row.get("match_method")),
-                match_score=_json_safe(row.get("match_score")), confidence=_json_safe(row.get("confidence")),
+                str(row["key"]), decision=d["decision"],
+                mapped_name=d.get("mapped_name") or (d.get("suggested") if is_unmatched else None), firm_id=firm_id,
+                suggested=suggested,
+                match_method="Manual (all states)" if is_unmatched else _json_safe(row.get("match_method")),
+                match_score=None if is_unmatched else _json_safe(row.get("match_score")),
+                confidence=None if is_unmatched else _json_safe(row.get("confidence")),
                 run_id=self.id, norm_name=nrm, source=f"inherited:{origin}",
             )
             out[d["decision"]] += 1
@@ -633,21 +727,28 @@ class PipelineRun:
             raise RuntimeError("The run is still in progress")
         review = self._annotated_review()
         known = dict(zip(review["key"], review.index))
+        enriched = self._enriched()
+        unmatched = self._bucket_rows(enriched, "unmatched") if enriched is not None else None
+        known_unmatched = dict(zip(unmatched["key"], unmatched.index)) if unmatched is not None else {}
         changed = 0
+        manual_name_scope = 0
         items_list = list(items)
         for item in items_list:
             key = str(item.get("key", ""))
-            if key not in known:
-                raise KeyError(f"{key!r} is not a review-queue row of this run")
+            is_manual = key not in known and key in known_unmatched
+            if key not in known and not is_manual:
+                raise KeyError(f"{key!r} is not a review-queue or unmatched row of this run")
             decision = item.get("decision")
             if decision is None:
                 changed += self.decisions.clear(key, self.id)
                 continue
             if decision not in DECISIONS:
                 raise ValueError(f"decision must be one of {DECISIONS} or null, got {decision!r}")
-            row = review.loc[known[key]]
-            suggested = _json_safe(row.get("SECP_NAME_MAPPED"))
+            row = review.loc[known[key]] if not is_manual else unmatched.loc[known_unmatched[key]]
+            suggested = None if is_manual else _json_safe(row.get("SECP_NAME_MAPPED"))
             mapped = (item.get("mapped_name") or "").strip() or None
+            if is_manual and decision != "approved":
+                raise ValueError(f"{key!r}: an unmatched row can only be mapped (approved with a bank), not rejected")
             if mapped is not None and mapped == (suggested or "").strip():
                 mapped = None  # same as the suggestion -> not an override
             final_name = mapped or suggested
@@ -658,13 +759,18 @@ class PipelineRun:
                 firm_id = self._resolve_firm_id(final_name)
                 if firm_id is None and mapped is None:
                     firm_id = _json_safe(row.get("Firm_ID"))
+            # A manual mapping made "for all states" propagates to the same filer name
+            # wherever it is unmatched (also in later runs); a plain one sticks to its key.
+            all_states = bool(item.get("all_states")) if is_manual else False
+            method = ("Manual (all states)" if all_states else "Manual") if is_manual else _json_safe(row.get("match_method"))
             self.decisions.set(
                 key, decision=decision, mapped_name=mapped, firm_id=_json_safe(firm_id), suggested=suggested,
-                match_method=_json_safe(row.get("match_method")), match_score=_json_safe(row.get("match_score")),
-                confidence=_json_safe(row.get("confidence")), run_id=self.id,
+                match_method=method, match_score=None if is_manual else _json_safe(row.get("match_score")),
+                confidence=None if is_manual else _json_safe(row.get("confidence")), run_id=self.id,
                 norm_name=self._norm(row.get("SECP_NAME")), source=None,
             )
             changed += 1
+            manual_name_scope += int(all_states)
         decided = any(item.get("decision") in DECISIONS for item in items_list)
         inherited = self.propagate_decisions() if decided else {"approved": 0, "rejected": 0, "candidates": 0}
         return {"changed": changed, "inherited": inherited, "counts": self.decision_counts()}
@@ -678,13 +784,17 @@ class PipelineRun:
             path = Path(self.config.universe_file or "")
             if path.is_file():
                 try:
-                    uni = pd.read_csv(path, encoding="latin-1", low_memory=False)
+                    from .datasources import detect_delimiter
+
+                    uni = pd.read_csv(path, sep=detect_delimiter(str(path)), encoding="latin-1", low_memory=False)
                     name_col = next((c for c in ("Bank Name", "SECP_NAME") if c in uni.columns), None)
                     id_col = next((c for c in ("Firm ID", "Firm_ID") if c in uni.columns), None)
                     if name_col and id_col:
+                        self._universe_names = {}
                         for name, fid in zip(uni[name_col], uni[id_col]):
                             if isinstance(name, str) and name.strip() and pd.notna(fid):
                                 self._universe_lookup.setdefault(name.strip().upper(), _json_safe(fid))
+                                self._universe_names.setdefault(name.strip().upper(), name.strip())
                 except Exception as e:  # noqa: BLE001
                     self._log("WARNING", f"Could not read universe for Firm ID lookup: {e}")
         return self._universe_lookup.get(mapped_name.strip().upper())

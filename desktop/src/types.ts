@@ -28,7 +28,7 @@ export interface Summary {
   avg_cluster_size: number;
   records_with_firm_id: number;
   unique_firm_ids: number;
-  updated_master?: { rows: number; original_rows: number; added_rows: number; approved_rows?: number; file: string | null };
+  updated_master?: { rows: number; original_rows: number; added_rows: number; approved_rows?: number; by_source?: Record<string, number>; file: string | null };
   lead_bank?: { rows: number; columns: string[] };
   /** The four pipeline buckets every result row lands in (see engine `bucket_series`). */
   buckets?: Record<Bucket, number>;
@@ -123,6 +123,14 @@ export interface DecisionItem {
   key: string;
   decision: Decision | null;
   mapped_name?: string | null;
+  /** manual mapping of an unmatched row: also apply to this filer name wherever it is unmatched */
+  all_states?: boolean;
+}
+
+export interface Bank {
+  name: string;
+  firm_id: number | string | null;
+  source: "universe" | "master";
 }
 
 export interface ApplyResult {

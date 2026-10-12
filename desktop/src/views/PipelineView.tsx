@@ -803,8 +803,13 @@ function BucketPanel({ run, client, bucket, title, blurb }: { run: RunSnapshot; 
   const [page, setPage] = useState<import("../types").Page | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const [banks, setBanks] = useState<import("../types").Bank[]>([]);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [hideMapped, setHideMapped] = useState(false);
   const limit = 100;
   const finished = run.status === "succeeded";
+  const manual = bucket === "unmatched";
   useEffect(() => {
     if (!finished) return;
     const t = setTimeout(() => {
@@ -814,10 +819,42 @@ function BucketPanel({ run, client, bucket, title, blurb }: { run: RunSnapshot; 
     }, 200);
     return () => clearTimeout(t);
   }, [client, run.id, bucket, search, offset, tick, finished]);
+  useEffect(() => {
+    if (finished && manual) client.banks(run.id).then(setBanks).catch(() => setBanks([]));
+  }, [client, run.id, finished, manual]);
   if (!finished) return <p className="muted">Available once the run finishes.</p>;
-  const cols = bucket === "unmatched"
-    ? ["SECP_NAME", "DEBT_STATE", "SECP_STATE", "SECP_NAME_NORMALIZED", "match_method"]
+
+  const mapTo = async (key: string, bank: string, allStates: boolean) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await client.setDecisions(run.id, [{ key, decision: "approved", mapped_name: bank, all_states: allStates }]);
+      const inh = r.inherited.approved;
+      setMsg(`Mapped → ${bank}${inh ? ` · ${inh} more filer(s) with the same name inherited it` : ""}. It goes into the updated mapping with “Add approved”.`);
+      setTick((t) => t + 1);
+    } catch (e) {
+      setMsg(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const undo = async (key: string) => {
+    setBusy(true);
+    try {
+      await client.setDecisions(run.id, [{ key, decision: null }]);
+      setTick((t) => t + 1);
+    } catch (e) {
+      setMsg(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cols = manual
+    ? ["SECP_NAME", "DEBT_STATE", "SECP_STATE", "SECP_NAME_NORMALIZED"]
     : ["SECP_NAME", "SECP_NAME_MAPPED", "matched_master_raw", "DEBT_STATE", "SECP_STATE", "match_method", "match_score", "confidence", "Firm_ID"];
+  const rows = (page?.rows ?? []).filter((r) => !(hideMapped && r.decision));
+  const counts = page?.decision_counts;
   return (
     <>
       <div className="row between wrap">
@@ -825,17 +862,153 @@ function BucketPanel({ run, client, bucket, title, blurb }: { run: RunSnapshot; 
           <h4>{title}</h4>
           <p className="small muted" style={{ maxWidth: 720 }}>{blurb}</p>
         </div>
-        <input style={{ maxWidth: 360 }} placeholder="Search secured party / mapped name…" value={search}
-          onChange={(e) => { setOffset(0); setSearch(e.target.value); }} />
+        <div className="row gap">
+          {manual && <label className="chip"><input type="checkbox" checked={hideMapped} onChange={(e) => setHideMapped(e.target.checked)} /> hide mapped</label>}
+          <input style={{ maxWidth: 360 }} placeholder="Search secured party / normalised name…" value={search}
+            onChange={(e) => { setOffset(0); setSearch(e.target.value); }} />
+        </div>
       </div>
+      {manual && (
+        <p className="small muted" style={{ margin: 0 }}>
+          Know the bank? Pick it from the Universe and <em>Map</em>. Tick <em>all states</em> when the filer name is that bank everywhere
+          (JPMORGAN CHASE BANK); leave it off for generic names that differ by state (PINNACLE BANK). Mapped filers are remembered for later runs.
+          {counts?.unapplied_approved ? ` ${counts.unapplied_approved} approved/mapped row(s) are not yet in the updated mapping — use “Add approved” on the Review step or promote.` : ""}
+        </p>
+      )}
+      {msg && <p className="small">{msg}</p>}
       {loadError && !page
         ? <p className="muted"><LoadFailed error={loadError} onRetry={() => setTick((t) => t + 1)} /></p>
-        : <DataTable page={page} cols={cols} offset={offset} limit={limit} setOffset={setOffset} />}
+        : manual ? (
+          <>
+            <datalist id="bank-list">{banks.map((b) => <option key={b.name} value={b.name}>{b.firm_id != null ? `Firm ID ${b.firm_id}` : ""}</option>)}</datalist>
+            <div className="table-wrap">
+              <table className="table review manual">
+                <thead><tr><th>Secured party (as filed)</th><th>States</th><th>Normalised</th><th>Map to bank</th><th>Status</th></tr></thead>
+                <tbody>
+                  {rows.map((r) => <ManualRow key={String(r.key)} row={r} run={run} busy={busy} banks={banks} onMap={mapTo} onUndo={undo} />)}
+                  {page && rows.length === 0 && <tr><td colSpan={5} className="muted">No rows.</td></tr>}
+                  {!page && <tr><td colSpan={5} className="muted">Loading…</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            {page && (
+              <div className="row between small">
+                <span className="muted">{page.total.toLocaleString()} filers · showing {Math.min(offset + 1, page.total)}–{Math.min(offset + limit, page.total)} · sorted by number of filings</span>
+                <div className="row gap">
+                  <button className="btn" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}>‹ Prev</button>
+                  <button className="btn" disabled={offset + limit >= page.total} onClick={() => setOffset(offset + limit)}>Next ›</button>
+                </div>
+              </div>
+            )}
+          </>
+        ) : <DataTable page={page} cols={cols} offset={offset} limit={limit} setOffset={setOffset} />}
     </>
   );
 }
 
+function ManualRow({ row: r, run, busy, banks, onMap, onUndo }: {
+  row: Record<string, unknown>; run: RunSnapshot; busy: boolean; banks: import("../types").Bank[];
+  onMap: (key: string, bank: string, allStates: boolean) => void; onUndo: (key: string) => void;
+}) {
+  const [bank, setBank] = useState("");
+  const [allStates, setAllStates] = useState(true);
+  const str = (v: unknown) => (v == null ? "" : String(v));
+  const key = str(r.key);
+  const decided = !!r.decision;
+  const known = banks.find((b) => b.name.toLowerCase() === bank.trim().toLowerCase());
+  const filings = typeof r.filings === "number" ? r.filings : 1;
+  const inherited = str(r.decision_source).startsWith("inherited:");
+  return (
+    <tr className={decided ? "decided approved" : ""}>
+      <td title={str(r.SECP_NAME)}><div className="cell-main">{str(r.SECP_NAME)}{filings > 1 ? <span className="muted small"> ×{filings}</span> : null}</div></td>
+      <td className="muted small">{str(r.DEBT_STATE)} → {str(r.SECP_STATE)}</td>
+      <td className="small muted" title={str(r.SECP_NAME_NORMALIZED)}><div className="cell-main">{str(r.SECP_NAME_NORMALIZED)}</div></td>
+      <td>
+        {decided ? (
+          <strong>{str(r.decided_mapped_name)}</strong>
+        ) : (
+          <div className="map-ctl">
+            <input className="inline bank-pick" list="bank-list" placeholder="type a bank…" value={bank} disabled={busy}
+              onChange={(e) => setBank(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && known) onMap(key, known.name, allStates); }} />
+            <label className="map-all" title="Also map this filer name wherever it is unmatched, now and in later runs">
+              <input type="checkbox" checked={allStates} onChange={(e) => setAllStates(e.target.checked)} /><span>all states</span>
+            </label>
+            <button className="btn ok" disabled={busy || !known} title={bank && !known ? "Pick a bank from the list" : undefined}
+              onClick={() => known && onMap(key, known.name, allStates)}>Map</button>
+          </div>
+        )}
+      </td>
+      <td>
+        {decided ? (
+          <div className="row gap">
+            <span className="pill approved" title={inherited ? `inherited from ${str(r.decision_source).slice(10)}` : r.decided_in_run && r.decided_in_run !== run.id ? `mapped in run ${str(r.decided_in_run)}` : undefined}>
+              mapped{inherited ? " · inherited" : r.decided_in_run && r.decided_in_run !== run.id ? " · earlier run" : ""}{r.decided_firm_id != null ? ` · Firm ID ${str(r.decided_firm_id)}` : ""}
+            </span>
+            <button className="link small" disabled={busy} onClick={() => onUndo(key)}>undo</button>
+          </div>
+        ) : <span className="muted small">unmatched</span>}
+      </td>
+    </tr>
+  );
+}
+
 // ============================================================================
+/** The updated mapping with provenance: what came in vs what this run / reviewers added. */
+function MasterProvenance({ run, client }: { run: RunSnapshot; client: EngineClient }) {
+  const [source, setSource] = useState<string>("added");
+  const [search, setSearch] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [page, setPage] = useState<(import("../types").Page & { by_source: Record<string, number> }) | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [open, setOpen] = useState(true);
+  const limit = 100;
+  useEffect(() => {
+    if (!open) return;
+    const t = setTimeout(() => {
+      client.masterRows(run.id, { source, search, offset, limit })
+        .then((p) => { setPage(p); setLoadError(null); })
+        .catch((e) => { setPage(null); setLoadError(describeError(e)); });
+    }, 200);
+    return () => clearTimeout(t);
+  }, [client, run.id, source, search, offset, open]);
+  const label = (k: string) =>
+    k === "original_master" ? "came in as the mapping"
+    : k === "reviewed_approved" ? "approved in review / mapped by hand"
+    : k.startsWith("pipeline_") ? `pipeline · ${k.slice(9)}` : k;
+  const by = page?.by_source ?? {};
+  const added = Object.entries(by).filter(([k]) => k !== "original_master").sort((a, b) => b[1] - a[1]);
+  return (
+    <div className="provenance">
+      <div className="row gap wrap">
+        <button className="link" onClick={() => setOpen((o) => !o)}>{open ? "Hide" : "Show"} what came in vs what was added</button>
+      </div>
+      {open && (
+        <>
+          <div className="seg small" style={{ marginTop: 8 }}>
+            <button className={source === "original" ? "on" : ""} onClick={() => { setOffset(0); setSource("original"); }}>
+              Came in {by.original_master != null ? `(${by.original_master.toLocaleString()})` : ""}
+            </button>
+            <button className={source === "added" ? "on" : ""} onClick={() => { setOffset(0); setSource("added"); }}>
+              Added {added.length ? `(${added.reduce((a, [, v]) => a + v, 0).toLocaleString()})` : ""}
+            </button>
+            {added.map(([k, v]) => (
+              <button key={k} className={source === k ? "on" : ""} onClick={() => { setOffset(0); setSource(k); }} title={k}>
+                {label(k)} ({v.toLocaleString()})
+              </button>
+            ))}
+          </div>
+          <div className="row gap" style={{ marginTop: 8 }}>
+            <input style={{ maxWidth: 360 }} placeholder="Search filer / bank…" value={search} onChange={(e) => { setOffset(0); setSearch(e.target.value); }} />
+          </div>
+          {loadError && !page
+            ? <p className="muted"><LoadFailed error={loadError} onRetry={() => setOpen(true)} /></p>
+            : <DataTable page={page} cols={["SECP_NAME", "SECP_NAME_MAPPED", "Firm ID", "DEBT_STATE", "SECP_STATE", "_source"]} offset={offset} limit={limit} setOffset={setOffset} />}
+        </>
+      )}
+    </div>
+  );
+}
+
 function OutputsPanel({ run, client, summary, stages, logs }: {
   run: RunSnapshot; client: EngineClient; summary: Summary | null; stages: StageState[]; logs: LogLine[];
 }) {
@@ -872,12 +1045,13 @@ function OutputsPanel({ run, client, summary, stages, logs }: {
         <h4>Updated mapping</h4>
         {um ? (
           <p>
-            {um.rows.toLocaleString()} rows = {um.original_rows.toLocaleString()} from the enriched mapping +{" "}
-            <strong>{um.added_rows.toLocaleString()} newly resolved</strong> (direct + fuzzy · high probability)
-            {um.approved_rows ? <> + <strong>{um.approved_rows.toLocaleString()} approved in review</strong></> : null}
+            {um.rows.toLocaleString()} rows = <strong>{um.original_rows.toLocaleString()} came in</strong> as the mapping +{" "}
+            <strong>{um.added_rows.toLocaleString()} added by the pipeline</strong> (direct + fuzzy · high probability)
+            {um.approved_rows ? <> + <strong>{um.approved_rows.toLocaleString()} approved or mapped by hand</strong></> : null}
             . The existing mapping always wins on conflicts.
           </p>
         ) : <p className="muted">Not produced.</p>}
+        {um && <MasterProvenance run={run} client={client} />}
         <div className="row gap">
           <input className="grow" value={dest} onChange={(e) => setDest(e.target.value)} placeholder="Destination mapping CSV" />
           {native.inTauri && (
