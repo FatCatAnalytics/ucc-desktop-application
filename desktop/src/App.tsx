@@ -67,6 +67,17 @@ export default function App() {
     setView("pipeline");
   };
   const onUpdate = useCallback((r: RunSnapshot) => setRuns((prev) => prev.map((x) => (x.id === r.id ? r : x))), []);
+  const onDelete = async (r: RunSnapshot) => {
+    if (!client) return;
+    if (!confirm(`Delete run "${r.name}"?\n\nIts output files are removed. Review decisions are kept (they live in the decisions database, not the run).`)) return;
+    try {
+      await client.deleteRun(r.id);
+      setRuns((prev) => prev.filter((x) => x.id !== r.id));
+      if (selected === r.id) setSelected(null);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   if (bootError) {
     return (
@@ -104,10 +115,13 @@ export default function App() {
         <div className="runs-list">
           {runs.length === 0 && <p className="muted small">No runs yet.</p>}
           {runs.map((r) => (
-            <button
+            <div
               key={r.id}
+              role="button"
+              tabIndex={0}
               className={`run-item ${r.id === selected && view === "pipeline" ? "active" : ""}`}
               onClick={() => { setSelected(r.id); setView("pipeline"); }}
+              onKeyDown={(e) => { if (e.key === "Enter") { setSelected(r.id); setView("pipeline"); } }}
             >
               <span className={`dot ${r.status}`} />
               <span className="run-name">{r.name}</span>
@@ -116,7 +130,11 @@ export default function App() {
                 {r.sample_rows ? ` · sample ${r.sample_rows.toLocaleString()}` : ""}
                 {r.summary?.buckets ? ` · ${r.summary.buckets.review.toLocaleString()} to review` : ""}
               </span>
-            </button>
+              {r.status !== "running" && r.status !== "queued" && (
+                <button type="button" className="run-delete" title="Delete this run" aria-label={`Delete run ${r.name}`}
+                  onClick={(e) => { e.stopPropagation(); onDelete(r); }}>×</button>
+              )}
+            </div>
           ))}
         </div>
         <button className={`nav-item ${view === "decisions" ? "active" : ""}`} onClick={() => setView("decisions")}>

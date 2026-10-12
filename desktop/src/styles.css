@@ -15,17 +15,7 @@
   color: var(--text);
   background: var(--bg);
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #15181d;
-    --panel: #1d2127;
-    --line: #2b313a;
-    --text: #e6e9ee;
-    --muted: #94a0b1;
-    --accent: #5b8cff;
-    --accent-ink: #0b1020;
-  }
-}
+/* Light theme only - the app does not follow the OS dark-mode setting. */
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body { -webkit-font-smoothing: antialiased; user-select: none; }
@@ -44,7 +34,7 @@ code { font-family: var(--mono); font-size: 12px; }
 .brand-mark { font-weight: 800; letter-spacing: .08em; color: var(--accent); }
 .brand-text { font-weight: 600; }
 .runs-list { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
-.run-item { display: grid; grid-template-columns: 10px 1fr; column-gap: 8px; text-align: left; background: none; border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; color: var(--text); cursor: pointer; }
+.run-item { position: relative; display: grid; grid-template-columns: 10px 1fr; column-gap: 8px; text-align: left; background: none; border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; color: var(--text); cursor: pointer; }
 .run-item:hover { background: var(--bg); }
 .run-item.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .run-item .run-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -256,3 +246,9 @@ input:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent
 .bank-stats { flex: 1; }
 .bank-head .btn { padding: 5px 10px; font-size: 12px; }
 .table-wrap.inset { border: none; border-top: 1px solid var(--line); border-radius: 0; max-height: 48vh; }
+
+/* sidebar: delete a run */
+.run-item .run-delete { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 15px; line-height: 22px; text-align: center; cursor: pointer; opacity: 0; padding: 0; }
+.run-item:hover .run-delete, .run-item.active .run-delete { opacity: 1; }
+.run-item .run-delete:hover { background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); }
+.run-item .run-name { padding-right: 22px; }
