@@ -34,6 +34,16 @@ REVIEW_COLUMNS = [
     "ambiguous_master_candidates", "Firm_ID", "cluster_id", "cluster_label", "cluster_size",
     "suggested_mapping", "suggestion_score", "suggestion_confidence", "alternative_suggestions",
 ]
+# ``_source`` values a reviewer (not the pipeline) puts into the updated master.
+REVIEWER_SOURCES = ("reviewed_approved", "mapped_by_hand")
+
+
+def decision_source(d: Dict[str, Any]) -> str:
+    """Provenance tag for an approved decision: a bank the reviewer picked for an
+    unmatched filer is ``mapped_by_hand``; approving the pipeline's suggestion
+    (incl. decisions inherited from one) is ``reviewed_approved``."""
+    return "mapped_by_hand" if str(d.get("match_method") or "").startswith("Manual") else "reviewed_approved"
+
 BUCKETS = ("direct", "fuzzy_high", "review", "unmatched")
 BUCKET_LABELS = {
     "direct": "Direct match",
@@ -377,7 +387,7 @@ class PipelineRun:
                 "rows": int(len(um)),
                 "original_rows": int(src.eq("original_master").sum()),
                 "added_rows": int(src.str.startswith("pipeline_").sum()),
-                "approved_rows": int(src.eq("reviewed_approved").sum()),
+                "approved_rows": int(src.isin(REVIEWER_SOURCES).sum()),
                 "by_source": {str(k): int(v) for k, v in src.value_counts().items()},
                 "file": self._latest("updated_master_*.csv", exclude="_with_source"),
             }
@@ -831,19 +841,21 @@ class PipelineRun:
         base = self._master_with_source()
         if base is None:
             raise FileNotFoundError("This run has no updated master to extend")
-        base = base[~base.get("_source", pd.Series("", index=base.index)).astype(str).eq("reviewed_approved")]
+        base = base[~base.get("_source", pd.Series("", index=base.index)).astype(str).isin(REVIEWER_SOURCES)]
         approved = self.decisions.approved()
         new = pd.DataFrame([{
             "DEBT_STATE": d["debt_state"], "SECP_STATE": d["secp_state"], "SECP_NAME": d["secp_name"],
             "SECP_NAME_MAPPED": d["mapped_name"] or d["suggested"], "Firm ID": d["firm_id"],
-            "_source": "reviewed_approved",
+            "_source": decision_source(d),
         } for d in approved], columns=list(MASTER_COLUMNS) + ["_source"])
         combined = pd.concat([base, new], ignore_index=True, sort=False)
         combined = combined.drop_duplicates(subset=list(MASTER_KEY), keep="first").reset_index(drop=True)
         fid = pd.to_numeric(combined["Firm ID"], errors="coerce")  # keep the master's integer formatting
         if (fid.dropna() % 1 == 0).all():
             combined["Firm ID"] = fid.astype("Int64")
-        added = int(combined["_source"].astype(str).eq("reviewed_approved").sum())
+        src = combined["_source"].astype(str)
+        added = int(src.isin(REVIEWER_SOURCES).sum())
+        by_hand = int(src.eq("mapped_by_hand").sum())
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         out = self.output_dir / f"updated_master_{ts}.csv"
@@ -855,20 +867,21 @@ class PipelineRun:
         combined.to_csv(self.output_dir / f"updated_master_{ts}_with_source.csv", index=False)
         self._cache["updated_master_data"] = combined
         self._cache.pop("updated_master_keys", None)
-        self._log("INFO", f"Applied review decisions: {added:,} approved rows added -> {out.name} "
-                          f"({len(approved) - added:,} already present under the same key)")
+        self._log("INFO", f"Applied review decisions: {added:,} rows added -> {out.name} "
+                          f"({added - by_hand:,} approved in review, {by_hand:,} mapped by hand; "
+                          f"{len(approved) - added:,} already present under the same key)")
         if self.summary is not None:
-            src = combined["_source"].astype(str)
             self.summary["updated_master"] = {
                 "rows": int(len(combined)),
                 "original_rows": int(src.eq("original_master").sum()),
                 "added_rows": int(src.str.startswith("pipeline_").sum()),
                 "approved_rows": added,
+                "by_source": {str(k): int(v) for k, v in src.value_counts().items()},
                 "file": str(out),
             }
         self._persist()
-        return {"approved": len(approved), "added": added, "file": str(out), "rows": int(len(combined)),
-                "counts": self.decision_counts()}
+        return {"approved": len(approved), "added": added, "by_hand": by_hand, "file": str(out),
+                "rows": int(len(combined)), "counts": self.decision_counts()}
 
     def clusters(self, *, search: str = "", min_size: int = 1, offset: int = 0, limit: int = 100) -> Dict[str, Any]:
         """New-entity clusters (Stage 5-7) summarised one row per cluster."""

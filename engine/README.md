@@ -68,7 +68,7 @@ lead-bank files) and `run.json` (status, timings, summary, log tail).
 | `POST /runs/{id}/propagate-decisions` | inherit decisions made on the same filer name elsewhere |
 | `GET /runs/{id}/review` | paged review queue (`confidence`, `search`, `method`, `decision` = `pending`/`approved`/`rejected`, `offset`, `limit`); each row carries its `key` and current decision |
 | `GET/PUT /runs/{id}/decisions` | read / record review decisions: `{items: [{key, decision: "approved"\|"rejected"\|null, mapped_name?, firm_id?}]}` |
-| `POST /runs/{id}/apply-decisions` | append approved rows to a fresh `updated_master_<ts>.csv` (`_source = reviewed_approved`) |
+| `POST /runs/{id}/apply-decisions` | append reviewer rows to a fresh `updated_master_<ts>.csv` (`_source = reviewed_approved` for approved suggestions, `mapped_by_hand` for banks picked for unmatched filers) |
 | `GET /decisions` | the decisions database across all runs (`decision`, `search`, `run_id`, `offset`, `limit`) |
 | `POST /decisions/clear` | `{keys: [...]}` – undo decisions (they become "to decide" again) |
 | `GET /decisions/history?key=` | audit log for one key |

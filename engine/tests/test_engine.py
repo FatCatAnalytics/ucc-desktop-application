@@ -521,11 +521,18 @@ def test_manual_mapping_of_unmatched_rows(tmp_path: Path):
 
     # manual mappings reach the updated master and the provenance view shows them as added
     res = run.apply_decisions()
-    assert res["added"] == 3
+    assert res["added"] == 3 and res["by_hand"] == 3
     prov = run.master_rows(source="added")
-    assert prov["total"] == 3 and prov["by_source"] == {"original_master": 1, "reviewed_approved": 3}
+    # hand-picked banks (incl. the inherited spelling variant) carry their own provenance, distinct
+    # from approving a pipeline suggestion in review
+    assert prov["total"] == 3 and prov["by_source"] == {"original_master": 1, "mapped_by_hand": 3}
+    assert run.master_rows(source="mapped_by_hand")["total"] == 3
     assert run.master_rows(source="original")["total"] == 1
     assert {r["SECP_NAME_MAPPED"] for r in prov["rows"]} == {"JPMorgan", "US Bank"}
+    assert run.summary["updated_master"]["by_source"]["mapped_by_hand"] == 3
+    assert run.summary["updated_master"]["approved_rows"] == 3
+    # applying again replaces, not duplicates, the reviewer's rows
+    assert run.apply_decisions()["added"] == 3 and run.master_rows(source="added")["total"] == 3
 
 
 def test_stage_2b_matches_a_national_bank_across_state_pairs_into_review():

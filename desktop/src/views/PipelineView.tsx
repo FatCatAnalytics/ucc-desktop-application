@@ -854,7 +854,7 @@ function BucketPanel({ run, client, bucket, title, blurb }: { run: RunSnapshot; 
     setMsg(null);
     try {
       const r = await client.applyDecisions(run.id);
-      setMsg(`Added ${r.added.toLocaleString()} approved / mapped row(s) to the updated mapping → ${r.file.split(/[\\/]/).pop()} (${r.rows.toLocaleString()} rows). Promote on the Outputs step to make it the master.`);
+      setMsg(`Added ${r.added.toLocaleString()} row(s) to the updated mapping (${(r.by_hand ?? 0).toLocaleString()} mapped by hand, ${(r.added - (r.by_hand ?? 0)).toLocaleString()} approved in review) → ${r.file.split(/[\\/]/).pop()} (${r.rows.toLocaleString()} rows). They are listed under "mapped by hand" / "approved in review" on the Outputs step; promote there to make it the master.`);
       setTick((t) => t + 1);
     } catch (e) {
       setMsg(describeError(e));
@@ -995,10 +995,12 @@ function MasterProvenance({ run, client }: { run: RunSnapshot; client: EngineCli
         .catch((e) => { setPage(null); setLoadError(describeError(e)); });
     }, 200);
     return () => clearTimeout(t);
-  }, [client, run.id, source, search, offset, open]);
+    // re-read when "Add approved / mapped" or Promote wrote a new file for this run
+  }, [client, run.id, source, search, offset, open, run.summary?.updated_master?.file]);
   const label = (k: string) =>
     k === "original_master" ? "came in as the mapping"
-    : k === "reviewed_approved" ? "approved in review / mapped by hand"
+    : k === "mapped_by_hand" ? "mapped by hand"
+    : k === "reviewed_approved" ? "approved in review"
     : k.startsWith("pipeline_") ? `pipeline · ${k.slice(9)}` : k;
   const by = page?.by_source ?? {};
   const added = Object.entries(by).filter(([k]) => k !== "original_master").sort((a, b) => b[1] - a[1]);
@@ -1072,7 +1074,9 @@ function OutputsPanel({ run, client, summary, stages, logs }: {
           <p>
             {um.rows.toLocaleString()} rows = <strong>{um.original_rows.toLocaleString()} came in</strong> as the mapping +{" "}
             <strong>{um.added_rows.toLocaleString()} added by the pipeline</strong> (direct + fuzzy · high probability)
-            {um.approved_rows ? <> + <strong>{um.approved_rows.toLocaleString()} approved or mapped by hand</strong></> : null}
+            {um.by_source?.reviewed_approved ? <> + <strong>{um.by_source.reviewed_approved.toLocaleString()} approved in review</strong></> : null}
+            {um.by_source?.mapped_by_hand ? <> + <strong>{um.by_source.mapped_by_hand.toLocaleString()} mapped by hand</strong></> : null}
+            {um.approved_rows && !um.by_source ? <> + <strong>{um.approved_rows.toLocaleString()} approved or mapped by hand</strong></> : null}
             . The existing mapping always wins on conflicts.
           </p>
         ) : <p className="muted">Not produced.</p>}

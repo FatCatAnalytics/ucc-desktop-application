@@ -136,6 +136,7 @@ export interface Bank {
 export interface ApplyResult {
   approved: number;
   added: number;
+  by_hand?: number;
   file: string;
   rows: number;
   counts: DecisionCounts;
