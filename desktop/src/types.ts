@@ -29,6 +29,7 @@ export interface Summary {
   records_with_firm_id: number;
   unique_firm_ids: number;
   updated_master?: { rows: number; original_rows: number; added_rows: number; approved_rows?: number; by_source?: Record<string, number>; file: string | null };
+  finalized?: FinalizeResult;
   lead_bank?: { rows: number; columns: string[] };
   /** The four pipeline buckets every result row lands in (see engine `bucket_series`). */
   buckets?: Record<Bucket, number>;
@@ -140,6 +141,19 @@ export interface ApplyResult {
   file: string;
   rows: number;
   counts: DecisionCounts;
+}
+
+export interface FinalizeResult {
+  period: string;
+  master_file: string;
+  ucc_file: string;
+  master_rows: number;
+  ucc_rows: number;
+  mapped_rows: number;
+  rows_with_firm_id: number;
+  unmapped_rows: number;
+  by_source: Record<string, number>;
+  finalized_at: string;
 }
 
 export interface OutputFile {

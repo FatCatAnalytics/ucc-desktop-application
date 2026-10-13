@@ -29,6 +29,11 @@ class PromoteRequest(BaseModel):
     destination: str = Field(..., description="Path the updated master should overwrite (a backup is kept)")
 
 
+class FinalizeRequest(BaseModel):
+    period: str = Field(..., description="Period label used as the file suffix, e.g. Aug26")
+    folder: str = Field(..., description="Folder that receives Master Mapping_<period>.csv and ucc_<period>_enriched.csv")
+
+
 class PreviewRequest(BaseModel):
     source: SourceSpec = Field(..., discriminator="type")
 
@@ -314,6 +319,14 @@ def create_app(store: Optional[RunStore] = None) -> FastAPI:
             return _get(run_id).promote_master(req.destination)
         except FileNotFoundError as e:
             raise HTTPException(404, str(e)) from e
+
+    @app.post("/runs/{run_id}/finalize")
+    def runs_finalize(run_id: str, req: FinalizeRequest) -> Dict[str, Any]:
+        """Write the reviewed mapping and the Firm-ID-enriched UCC file for a period."""
+        try:
+            return _get(run_id).finalize(period=req.period, folder=req.folder)
+        except (FileNotFoundError, ValueError) as e:
+            raise HTTPException(400 if isinstance(e, ValueError) else 404, str(e)) from e
 
     return app
 

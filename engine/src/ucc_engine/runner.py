@@ -9,6 +9,7 @@ from __future__ import annotations
 import gc
 import json
 import math
+import re
 import shutil
 import threading
 import time
@@ -944,6 +945,87 @@ class PipelineRun:
         self._log("INFO", f"Promoted {Path(src).name} -> {dest}" + (f" (backup: {backup.name})" if backup else ""))
         self._persist()
         return {"source": src, "destination": str(dest), "backup": str(backup) if backup else None}
+
+    def _raw_ucc_path(self) -> Optional[Path]:
+        """The UCC file this run was fed (the sampled copy when a sample was run)."""
+        for cand in (self.config.ucc_file, str(self.run_dir / "inputs" / "ucc.csv"),
+                     getattr(self.source.spec, "ucc_path", "")):
+            if cand and Path(cand).expanduser().is_file():
+                return Path(cand).expanduser()
+        return None
+
+    def finalize(self, *, period: str, folder: str) -> Dict[str, Any]:
+        """Close the period: write the reviewed mapping as ``Master Mapping_<period>.csv``
+        and the UCC file with ``SECP_NAME_MAPPED`` / ``Firm_ID`` appended as
+        ``ucc_<period>_enriched.csv``, both into ``folder``.
+
+        Unapplied approvals are applied first so the files carry every review
+        decision. The enrichment joins on the same key the matcher uses
+        (state pair + upper-cased, stripped filer name), one mapping per key,
+        and keeps every raw row and column; unmapped filings stay in the file
+        with the new columns blank.
+        """
+        period = re.sub(r"[^A-Za-z0-9_-]+", "", period.strip())
+        if not period:
+            raise ValueError("A period label is required, e.g. Aug26")
+        if self.decision_counts()["unapplied_approved"]:
+            self.apply_decisions()
+        src = self._latest("updated_master_*.csv", exclude="_with_source")
+        if not src:
+            raise FileNotFoundError("This run produced no updated_master_*.csv")
+        raw_path = self._raw_ucc_path()
+        if raw_path is None:
+            raise FileNotFoundError("The run's UCC file is no longer where it was; re-run with the current file")
+        from .datasources import detect_delimiter
+        from .core.pipeline_logic import _standardize_state_columns
+
+        dest = Path(folder).expanduser()
+        dest.mkdir(parents=True, exist_ok=True)
+        master_out = dest / f"Master Mapping_{period}.csv"
+        ucc_out = dest / f"ucc_{period}_enriched.csv"
+        if master_out.exists():
+            shutil.copy2(master_out, master_out.with_name(f"{master_out.stem}.backup_{datetime.now():%Y%m%d_%H%M%S}.csv"))
+        shutil.copy2(src, master_out)
+
+        master = pd.read_csv(master_out, encoding="latin-1", low_memory=False)
+        master = _standardize_state_columns(master)
+        with_src = self._master_with_source()
+        if with_src is not None and "_source" in with_src.columns and len(with_src) == len(master):
+            master["mapping_source"] = with_src["_source"].astype(str).values
+        key = lambda df: (df["DEBT_STATE"].astype("string").fillna("") + "|" + df["SECP_STATE"].astype("string").fillna("")
+                          + "|" + df["SECP_NAME"].astype("string").fillna("").str.strip().str.upper())
+        master["_key"] = key(master)
+        rhs_cols = ["_key", "SECP_NAME_MAPPED", "Firm ID"] + (["mapping_source"] if "mapping_source" in master.columns else [])
+        rhs = master[rhs_cols].drop_duplicates("_key", keep="first").rename(columns={"Firm ID": "Firm_ID"})
+
+        raw = pd.read_csv(raw_path, sep=detect_delimiter(str(raw_path)), encoding="latin-1", low_memory=False)
+        raw = raw.loc[:, ~raw.columns.astype(str).str.startswith("Unnamed:")]  # a saved pandas index
+        raw = raw.drop(columns=[c for c in ("SECP_NAME_MAPPED", "Firm_ID", "Firm ID", "mapping_source") if c in raw.columns])
+        missing = [c for c in ("DEBT_STATE", "SECP_STATE", "SECP_NAME") if c not in raw.columns]
+        if missing:
+            raise ValueError(f"UCC file is missing join column(s) {missing}")
+        raw_std = _standardize_state_columns(raw[["DEBT_STATE", "SECP_STATE", "SECP_NAME"]])
+        raw["_key"] = key(raw_std)
+        enriched = raw.merge(rhs, on="_key", how="left").drop(columns="_key")
+        fid = pd.to_numeric(enriched["Firm_ID"], errors="coerce")
+        if (fid.dropna() % 1 == 0).all():
+            enriched["Firm_ID"] = fid.astype("Int64")
+        enriched.to_csv(ucc_out, index=False)
+
+        n = int(len(enriched))
+        mapped = int(enriched["SECP_NAME_MAPPED"].notna().sum())
+        with_fid = int(enriched["Firm_ID"].notna().sum())
+        by_src = ({str(k): int(v) for k, v in enriched["mapping_source"].value_counts().items()}
+                  if "mapping_source" in enriched.columns else {})
+        result = {"period": period, "master_file": str(master_out), "ucc_file": str(ucc_out), "master_rows": int(len(master)),
+                  "ucc_rows": n, "mapped_rows": mapped, "rows_with_firm_id": with_fid, "unmapped_rows": n - mapped,
+                  "by_source": by_src, "finalized_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        self._log("INFO", f"Finalised {period}: {master_out.name} ({len(master):,} rows); {ucc_out.name}: "
+                          f"{mapped:,}/{n:,} filings mapped, {with_fid:,} with Firm ID")
+        if self.summary is not None:
+            self.summary["finalized"] = result
+        self._persist()
+        return result
 
     # --------------------------------------------------------------- restore
     @classmethod

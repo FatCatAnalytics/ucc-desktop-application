@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EngineClient, native } from "../api";
-import type { Bucket, CsvSource, Health, LogLine, ModelsStatus, RunSnapshot, SourcePreview, SourceSpec, StageState, Summary } from "../types";
-import { Bars, DataTable, LoadFailed, OutputsTab, ReviewTab, describeError } from "./tables";
+import type { Bucket, CsvSource, FinalizeResult, Health, LogLine, ModelsStatus, RunSnapshot, SourcePreview, SourceSpec, StageState, Summary } from "../types";
+import { Bars, DataTable, LoadFailed, OutputsTab, ReviewTab, Stat, describeError } from "./tables";
 
 /**
  * The pipeline page. One horizontal flow:
@@ -1036,6 +1036,87 @@ function MasterProvenance({ run, client }: { run: RunSnapshot; client: EngineCli
   );
 }
 
+/** Suggested period label for a run: month + 2-digit year of when it ran, e.g. Oct26. */
+function defaultPeriod(run: RunSnapshot): string {
+  const d = new Date(run.finished_at ?? run.created_at ?? Date.now());
+  const mon = d.toLocaleString("en-GB", { month: "short" }).replace(/[^A-Za-z]/g, "");
+  return `${mon}${String(d.getFullYear()).slice(-2)}`;
+}
+
+/** Close the period: the reviewed mapping as Master Mapping_<period>.csv and the UCC file with
+ *  bank + Firm ID appended as ucc_<period>_enriched.csv, for downstream processing. */
+function FinalizePanel({ run, client, summary, unapplied }: { run: RunSnapshot; client: EngineClient; summary: Summary | null; unapplied: number }) {
+  const masterPath = run.source.type === "csv" ? run.source.master_path : "";
+  const [period, setPeriod] = useState(summary?.finalized?.period ?? defaultPeriod(run));
+  const [folder, setFolder] = useState(() => {
+    const prev = summary?.finalized?.master_file;
+    const base = prev ?? masterPath;
+    return base ? base.replace(/[\\/][^\\/]*$/, "") : "";
+  });
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [result, setResult] = useState<FinalizeResult | null>(summary?.finalized ?? null);
+  const go = async () => {
+    const extra = unapplied ? ` ${unapplied} approved review row(s) not yet in the mapping will be added first.` : "";
+    if (!confirm(`Write Master Mapping_${period}.csv and ucc_${period}_enriched.csv to\n${folder}?${extra}`)) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await client.finalize(run.id, period, folder);
+      setResult(r);
+      setMsg(null);
+    } catch (e) {
+      setMsg(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const fname = (p: string) => p.split(/[\\/]/).pop();
+  return (
+    <div>
+      <h4>Close the period</h4>
+      <p className="small muted" style={{ maxWidth: 760 }}>
+        Once the review is done, write the reviewed mapping as <code>Master Mapping_&lt;period&gt;.csv</code> and go back to the
+        UCC file to append <code>SECP_NAME_MAPPED</code>, <code>Firm_ID</code> and <code>mapping_source</code> to every filing
+        (<code>ucc_&lt;period&gt;_enriched.csv</code>). Every raw row and column is kept; filings with no mapping stay in with those columns blank.
+      </p>
+      <div className="row gap wrap">
+        <label className="small muted">Period</label>
+        <input style={{ width: 110 }} value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="Aug26" />
+        <label className="small muted">Folder</label>
+        <input className="grow" value={folder} onChange={(e) => setFolder(e.target.value)} placeholder="Folder that receives both files" />
+        {native.inTauri && (
+          <button className="btn" onClick={async () => { const p = await native.pickFolder("Folder for the period files"); if (p) setFolder(p); }}>Choose…</button>
+        )}
+        <button className="btn btn-primary" disabled={!period.trim() || !folder.trim() || busy} onClick={go}>
+          {busy ? "Writing…" : `Close ${period.trim() || "period"}`}
+        </button>
+      </div>
+      {result && (
+        <div className="finalized">
+          <p className="small">
+            <strong>{result.period}</strong> written {new Date(result.finalized_at).toLocaleString()}:{" "}
+            <button className="link" onClick={() => native.reveal(result.master_file)} title={result.master_file}>{fname(result.master_file)}</button>{" "}
+            ({result.master_rows.toLocaleString()} rows) ·{" "}
+            <button className="link" onClick={() => native.reveal(result.ucc_file)} title={result.ucc_file}>{fname(result.ucc_file)}</button>{" "}
+            ({result.ucc_rows.toLocaleString()} filings)
+          </p>
+          <div className="stats">
+            <Stat label="Filings mapped to a bank" value={result.mapped_rows} sub={pct(result.mapped_rows, result.ucc_rows)} />
+            <Stat label="With Firm ID" value={result.rows_with_firm_id} sub={pct(result.rows_with_firm_id, result.ucc_rows)} />
+            <Stat label="Unmapped (columns blank)" value={result.unmapped_rows} sub={pct(result.unmapped_rows, result.ucc_rows)} />
+          </div>
+        </div>
+      )}
+      {msg && <p className="small">{msg}</p>}
+    </div>
+  );
+}
+
+function pct(n: number, total: number): string {
+  return total ? `${((n / total) * 100).toFixed(1)}%` : "";
+}
+
 function OutputsPanel({ run, client, summary, stages, logs }: {
   run: RunSnapshot; client: EngineClient; summary: Summary | null; stages: StageState[]; logs: LogLine[];
 }) {
@@ -1096,6 +1177,7 @@ function OutputsPanel({ run, client, summary, stages, logs }: {
         {unapplied ? <p className="small muted">{unapplied} approved review row(s) are not in the file yet — promoting adds them.</p> : null}
         {msg && <p className="small">{msg}</p>}
       </div>
+      <FinalizePanel run={run} client={client} summary={summary} unapplied={unapplied} />
       {summary && (
         <div>
           <h4>Step timings</h4>

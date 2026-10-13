@@ -65,6 +65,11 @@ async fn pick_save_file(app: AppHandle, title: String, default_name: String) -> 
 }
 
 #[tauri::command]
+async fn pick_folder(app: AppHandle, title: String) -> Option<String> {
+    app.dialog().file().set_title(&title).blocking_pick_folder().map(|p| p.to_string())
+}
+
+#[tauri::command]
 fn reveal_path(app: AppHandle, path: String) -> Result<(), String> {
     app.opener().reveal_item_in_dir(&path).map_err(|e| e.to_string())
 }
@@ -210,7 +215,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(EngineState::default())
-        .invoke_handler(tauri::generate_handler![engine_url, pick_file, pick_save_file, reveal_path, open_path])
+        .invoke_handler(tauri::generate_handler![engine_url, pick_file, pick_save_file, pick_folder, reveal_path, open_path])
         .setup(|app| {
             start_engine(&app.handle().clone());
             Ok(())

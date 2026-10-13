@@ -565,3 +565,34 @@ def test_stage_2b_matches_a_national_bank_across_state_pairs_into_review():
     assert us["match_method"] == "Exact Match (Normalized - Other State)" and us["Firm_ID"] == 8
     assert pd.isna(out.iloc[1]["SECP_NAME_MAPPED"]), "state-dependent names must not match across states"
     assert pd.isna(out.iloc[2]["SECP_NAME_MAPPED"])
+
+
+def test_finalize_writes_dated_master_and_firm_id_enriched_ucc(tmp_path: Path):
+    """Closing a period writes Master Mapping_<period>.csv (reviewed) and the raw UCC file with
+    SECP_NAME_MAPPED / Firm_ID appended: every raw row and column kept, join on the matcher's
+    key (states + upper-cased name), pending approvals applied first."""
+    run = _fake_finished_run(tmp_path)
+    ucc = tmp_path / "u.csv"  # mixed case + extra columns + a pandas index column, like the real extract
+    ucc.write_text(",DEBT_STATE,SECP_STATE,SECP_NAME,FILING_NO\n"
+                   "0,fl,FL,Known,F1\n1,CA,CA,Acme Bk NA,F2\n2,CA,CA,Acme Bk NA,F3\n3,NY,NY,Nobody Inc,F4\n")
+    run.config.ucc_file = str(ucc)
+    k_acme = next(r["key"] for r in run.review()["rows"] if r["SECP_NAME"] == "ACME BK NA")
+    run.set_decisions([{"key": k_acme, "decision": "approved"}])
+    assert run.decision_counts()["unapplied_approved"] == 1
+
+    with pytest.raises(ValueError):
+        run.finalize(period="  ", folder=str(tmp_path / "out"))
+    res = run.finalize(period="Aug 26", folder=str(tmp_path / "out"))
+    assert res["period"] == "Aug26" and run.decision_counts()["unapplied_approved"] == 0
+    master = pd.read_csv(tmp_path / "out" / "Master Mapping_Aug26.csv")
+    assert master["SECP_NAME"].tolist() == ["KNOWN", "ACME BK NA"] and master["Firm ID"].tolist() == [5, 101]
+
+    out = pd.read_csv(tmp_path / "out" / "ucc_Aug26_enriched.csv")
+    assert list(out.columns) == ["DEBT_STATE", "SECP_STATE", "SECP_NAME", "FILING_NO", "SECP_NAME_MAPPED", "Firm_ID", "mapping_source"]
+    assert out["FILING_NO"].tolist() == ["F1", "F2", "F3", "F4"]  # one row per filing, order kept
+    assert out["SECP_NAME"].tolist() == ["Known", "Acme Bk NA", "Acme Bk NA", "Nobody Inc"]  # raw spelling untouched
+    assert out["SECP_NAME_MAPPED"].tolist()[:3] == ["Known", "Acme Bank", "Acme Bank"] and pd.isna(out["SECP_NAME_MAPPED"][3])
+    assert out["Firm_ID"].tolist()[:3] == [5, 101, 101] and pd.isna(out["Firm_ID"][3])
+    assert out["mapping_source"].tolist()[:3] == ["original_master", "reviewed_approved", "reviewed_approved"]
+    assert res == {**res, "ucc_rows": 4, "mapped_rows": 3, "rows_with_firm_id": 3, "unmapped_rows": 1}
+    assert run.summary["finalized"]["ucc_file"].endswith("ucc_Aug26_enriched.csv")

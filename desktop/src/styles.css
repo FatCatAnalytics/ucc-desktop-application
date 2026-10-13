@@ -278,3 +278,8 @@ input:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent
 .map-all input { width: auto; margin: 0; }
 .nowrap { white-space: nowrap; }
 .provenance { margin-top: 10px; }
+
+/* ---- close the period ---- */
+.finalized { margin-top: 10px; }
+.finalized .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-top: 8px; max-width: 720px; }
+.finalized code, h4 + p code { font-size: 12px; }

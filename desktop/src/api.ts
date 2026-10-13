@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  ApplyResult, Bank, Bucket, DecisionCounts, DecisionItem, DecisionsPage, Health, LogLine, ModelsStatus, ModelsSync, OutputFile, Page, ReviewGroup, RunSnapshot,
+  ApplyResult, Bank, FinalizeResult, Bucket, DecisionCounts, DecisionItem, DecisionsPage, Health, LogLine, ModelsStatus, ModelsSync, OutputFile, Page, ReviewGroup, RunSnapshot,
   SourcePreview, SourceSpec, StoreCounts, Summary,
 } from "./types";
 
@@ -155,6 +155,8 @@ export class EngineClient {
   exportDecisions = (destination: string) =>
     this.req<{ path: string; rows: number }>("/decisions/export", { method: "POST", body: JSON.stringify({ destination }) });
 
+  finalize = (id: string, period: string, folder: string) =>
+    this.req<FinalizeResult>(`/runs/${id}/finalize`, { method: "POST", body: JSON.stringify({ period, folder }) });
   promoteMaster = (id: string, destination: string) =>
     this.req<{ source: string; destination: string; backup: string | null }>(`/runs/${id}/promote-master`, {
       method: "POST",
@@ -167,6 +169,7 @@ export const native = {
   pickFile: (title: string) => (inTauri ? invoke<string | null>("pick_file", { title }) : Promise.resolve(null)),
   pickSaveFile: (title: string, defaultName: string) =>
     inTauri ? invoke<string | null>("pick_save_file", { title, defaultName }) : Promise.resolve(null),
+  pickFolder: (title: string) => (inTauri ? invoke<string | null>("pick_folder", { title }) : Promise.resolve(null)),
   reveal: (path: string) => (inTauri ? invoke<void>("reveal_path", { path }) : Promise.resolve()),
   open: (path: string) => (inTauri ? invoke<void>("open_path", { path }) : Promise.resolve()),
   inTauri,
