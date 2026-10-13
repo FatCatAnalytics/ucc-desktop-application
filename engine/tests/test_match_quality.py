@@ -140,3 +140,28 @@ def test_same_words_different_order_do_not_auto_match():
     a, b = normalize_name("NATIONAL CITY BANK"), normalize_name("CITY NATIONAL BANK")
     assert combined_fuzzy_score(a, b) < 85, "order-swapped bank names must not reach the review floor on fuzzy alone"
     assert combined_fuzzy_score(a, a) == 100
+
+
+TRACKED = REPO / "input" / "tracked_banks.csv"
+
+
+@pytest.mark.skipif(not (MASTER.exists() and TRACKED.exists()), reason="input files not present")
+def test_every_master_bank_is_a_tracked_bank_with_the_same_firm_id():
+    """Every SECP_NAME_MAPPED in the master must resolve to a tracked bank (case-insensitive,
+    the lookup the enrichment stage uses) and carry the same Firm ID, so no mapped filing
+    is left without a Firm ID and the hand-mapping picker offers every bank the master uses."""
+    from ucc_engine.datasources import detect_delimiter
+
+    m = pd.read_csv(MASTER, encoding="latin-1", low_memory=False)
+    t = pd.read_csv(TRACKED, sep=detect_delimiter(str(TRACKED)), encoding="latin-1", dtype=str, keep_default_na=False)
+    id_col = "Firm_ID" if "Firm_ID" in t.columns else "Firm ID"
+    tracked = {n.strip().upper(): i.strip() for n, i in zip(t["Bank Name"], t[id_col])}
+    assert len(tracked) == len(t), "tracked bank names must be unique (case-insensitive)"
+
+    m["bank"] = m["SECP_NAME_MAPPED"].astype(str).str.strip().str.upper()
+    m["fid"] = pd.to_numeric(m["Firm ID"], errors="coerce").astype("Int64").astype(str)
+    missing = sorted(set(m["bank"]) - set(tracked))
+    assert not missing, f"master banks not in tracked_banks.csv: {missing}"
+    per_bank = m[m["fid"] != "<NA>"].groupby("bank")["fid"].agg(lambda s: sorted(set(s)))
+    clashes = {b: (ids, tracked[b]) for b, ids in per_bank.items() if ids != [tracked[b]]}
+    assert not clashes, f"Firm ID differs between master and tracked list: {clashes}"

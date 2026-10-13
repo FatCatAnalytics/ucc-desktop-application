@@ -109,11 +109,11 @@ Carrollton Bank	6716
 Carter Bank & Trust	4509
 Cass Commercial Bank	725
 CB&S Bank	6652
-Centennial Bank 	5424
+Centennial Bank	5424
 Centier Bank	742
 Central Bank & Trust Co. (KY)	743
 Central Bank and Trust Company (WY)	744
-Central Bank - Utah 	6108
+Central Bank - Utah	6108
 Central State Bank (AL)	7139
 Central Trust Bank	747
 Centreville Savings Bank	748
@@ -125,10 +125,10 @@ Choiceone Financial Services	6712
 CIB Bank	624
 CIBC	628
 Citi	804
-Citizens Bank 	4841
+Citizens Bank	4841
 Citizens Bank (MI)	805
 Citizens Bank (OR)	806
-Citizens Bank (RI)	#NA
+Citizens Bank (RI)	
 Citizens Bank (TN, VA)	811
 Citizens Banking Company (OH)	810
 Citizens Business Bank (CA)	812
@@ -343,7 +343,7 @@ Mascoma Savings Bank	4535
 Mechanics Bank	2113
 Mercantile Bank of Michigan	2134
 Merchants Bank (VT)	2141
-Merchants Bank, National Association	#NA
+Merchants Bank, National Association	
 Meredith Village Savings Bank	4536
 Meridian Bank NA	2149
 Merrimack County Savings Bank	4537
@@ -423,7 +423,7 @@ Prospect Capital Corp.	6257
 Prosperity Bank	2581
 Provident Bank	2586
 Randolph-Brooks Federal Credit Union	2651
-Red River Bank - Louisiana 	6110
+Red River Bank - Louisiana	6110
 Redstone Federal Credit Union	2659
 Regions Bank	2665
 Reliabank Dakota	5972
@@ -561,3 +561,34 @@ Wyoming State Bank	5990
 Yadkin Valley Bank & Trust (NC)	4554
 York Traditions Bank	5843
 Zions Bank	3369
+Deutsche Bank	1058
+Sumitomo Mitsui Bank	2970
+Barclays	469
+Credit Suisse First Boston/CSFB	966
+Synovus	3007
+BNP Paribas	311
+Morgan Stanley	2230
+Monroe Capital	6753
+Umpqua Bank	3168
+Blackrock	522
+Alerus Financial	5337
+First Savings Bank (IN)	7156
+KBC Bank	1856
+SouthPoint Bank (AL)	7157
+CrossFirst Bank	7141
+Delta Community Credit Union	4491
+ENT Credit Union (CO)	7249
+Flagship Bank (FL)	7158
+Elevations Credit Union (CO)	7252
+Bank of Cleveland (TN)	7247
+Canvas Credit Union (CO)	7259
+Farm Credit Services of America	6545
+Ameris Bancorporation	4504
+Univest National Bank and Trust	5427
+Union Bank & Trust Company (NE)	4553
+Centennial Bank (AR)	5424
+Great Western Bancorporation (NE)	4527
+Midsouth Bancorp Inc, Lafayette	2175
+COMMUNITY BANK OF MISSISSIPPI	4500
+The Bank of San Antonio	7007
+Vystar Credit Union	4490
