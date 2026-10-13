@@ -1,0 +1,408 @@
+From e38b592ff64dc1b89bc37baa6e533e678d95e257 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 13 Oct 2026 11:42:18 +0100
+Subject: [PATCH] Close the period: Master Mapping_<period>.csv +
+ ucc_<period>_enriched.csv from the reviewed mapping
+
+New Outputs-step block and POST /runs/{id}/finalize. Applies pending
+approvals, writes the reviewed mapping with the period suffix, then joins
+it back onto the run's UCC file on the matcher's key (state pair +
+upper-cased name) and appends SECP_NAME_MAPPED, Firm_ID and
+mapping_source to every filing - all raw rows and columns kept, unmapped
+filings left blank. Folder picker added to the Tauri shell.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01K5M7FnXPWrv7D7XYUXLqa1
+---
+ desktop/src-tauri/src/lib.rs       |  7 ++-
+ desktop/src/api.ts                 |  5 +-
+ desktop/src/styles.css             |  5 ++
+ desktop/src/types.ts               | 14 +++++
+ desktop/src/views/PipelineView.tsx | 86 +++++++++++++++++++++++++++++-
+ engine/src/ucc_engine/api.py       | 13 +++++
+ engine/src/ucc_engine/runner.py    | 82 ++++++++++++++++++++++++++++
+ engine/tests/test_engine.py        | 31 +++++++++++
+ 8 files changed, 239 insertions(+), 4 deletions(-)
+
+diff --git a/desktop/src-tauri/src/lib.rs b/desktop/src-tauri/src/lib.rs
+index ca9e8a9..0970be8 100644
+--- a/desktop/src-tauri/src/lib.rs
++++ b/desktop/src-tauri/src/lib.rs
+@@ -64,6 +64,11 @@ async fn pick_save_file(app: AppHandle, title: String, default_name: String) ->
+         .map(|p| p.to_string())
+ }
+ 
++#[tauri::command]
++async fn pick_folder(app: AppHandle, title: String) -> Option<String> {
++    app.dialog().file().set_title(&title).blocking_pick_folder().map(|p| p.to_string())
++}
++
+ #[tauri::command]
+ fn reveal_path(app: AppHandle, path: String) -> Result<(), String> {
+     app.opener().reveal_item_in_dir(&path).map_err(|e| e.to_string())
+@@ -210,7 +215,7 @@ pub fn run() {
+         .plugin(tauri_plugin_dialog::init())
+         .plugin(tauri_plugin_opener::init())
+         .manage(EngineState::default())
+-        .invoke_handler(tauri::generate_handler![engine_url, pick_file, pick_save_file, reveal_path, open_path])
++        .invoke_handler(tauri::generate_handler![engine_url, pick_file, pick_save_file, pick_folder, reveal_path, open_path])
+         .setup(|app| {
+             start_engine(&app.handle().clone());
+             Ok(())
+diff --git a/desktop/src/api.ts b/desktop/src/api.ts
+index 53b508c..a7d10bb 100644
+--- a/desktop/src/api.ts
++++ b/desktop/src/api.ts
+@@ -1,6 +1,6 @@
+ import { invoke } from "@tauri-apps/api/core";
+ import type {
+-  ApplyResult, Bank, Bucket, DecisionCounts, DecisionItem, DecisionsPage, Health, LogLine, ModelsStatus, ModelsSync, OutputFile, Page, ReviewGroup, RunSnapshot,
++  ApplyResult, Bank, FinalizeResult, Bucket, DecisionCounts, DecisionItem, DecisionsPage, Health, LogLine, ModelsStatus, ModelsSync, OutputFile, Page, ReviewGroup, RunSnapshot,
+   SourcePreview, SourceSpec, StoreCounts, Summary,
+ } from "./types";
+ 
+@@ -155,6 +155,8 @@ export class EngineClient {
+   exportDecisions = (destination: string) =>
+     this.req<{ path: string; rows: number }>("/decisions/export", { method: "POST", body: JSON.stringify({ destination }) });
+ 
++  finalize = (id: string, period: string, folder: string) =>
++    this.req<FinalizeResult>(`/runs/${id}/finalize`, { method: "POST", body: JSON.stringify({ period, folder }) });
+   promoteMaster = (id: string, destination: string) =>
+     this.req<{ source: string; destination: string; backup: string | null }>(`/runs/${id}/promote-master`, {
+       method: "POST",
+@@ -167,6 +169,7 @@ export const native = {
+   pickFile: (title: string) => (inTauri ? invoke<string | null>("pick_file", { title }) : Promise.resolve(null)),
+   pickSaveFile: (title: string, defaultName: string) =>
+     inTauri ? invoke<string | null>("pick_save_file", { title, defaultName }) : Promise.resolve(null),
++  pickFolder: (title: string) => (inTauri ? invoke<string | null>("pick_folder", { title }) : Promise.resolve(null)),
+   reveal: (path: string) => (inTauri ? invoke<void>("reveal_path", { path }) : Promise.resolve()),
+   open: (path: string) => (inTauri ? invoke<void>("open_path", { path }) : Promise.resolve()),
+   inTauri,
+diff --git a/desktop/src/styles.css b/desktop/src/styles.css
+index a0f5f6a..64da6a0 100644
+--- a/desktop/src/styles.css
++++ b/desktop/src/styles.css
+@@ -278,3 +278,8 @@ input:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent
+ .map-all input { width: auto; margin: 0; }
+ .nowrap { white-space: nowrap; }
+ .provenance { margin-top: 10px; }
++
++/* ---- close the period ---- */
++.finalized { margin-top: 10px; }
++.finalized .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-top: 8px; max-width: 720px; }
++.finalized code, h4 + p code { font-size: 12px; }
+diff --git a/desktop/src/types.ts b/desktop/src/types.ts
+index a6686df..15e69e6 100644
+--- a/desktop/src/types.ts
++++ b/desktop/src/types.ts
+@@ -29,6 +29,7 @@ export interface Summary {
+   records_with_firm_id: number;
+   unique_firm_ids: number;
+   updated_master?: { rows: number; original_rows: number; added_rows: number; approved_rows?: number; by_source?: Record<string, number>; file: string | null };
++  finalized?: FinalizeResult;
+   lead_bank?: { rows: number; columns: string[] };
+   /** The four pipeline buckets every result row lands in (see engine `bucket_series`). */
+   buckets?: Record<Bucket, number>;
+@@ -142,6 +143,19 @@ export interface ApplyResult {
+   counts: DecisionCounts;
+ }
+ 
++export interface FinalizeResult {
++  period: string;
++  master_file: string;
++  ucc_file: string;
++  master_rows: number;
++  ucc_rows: number;
++  mapped_rows: number;
++  rows_with_firm_id: number;
++  unmapped_rows: number;
++  by_source: Record<string, number>;
++  finalized_at: string;
++}
++
+ export interface OutputFile {
+   name: string;
+   path: string;
+diff --git a/desktop/src/views/PipelineView.tsx b/desktop/src/views/PipelineView.tsx
+index e3f8fbc..9254f8b 100644
+--- a/desktop/src/views/PipelineView.tsx
++++ b/desktop/src/views/PipelineView.tsx
+@@ -1,7 +1,7 @@
+ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ import { EngineClient, native } from "../api";
+-import type { Bucket, CsvSource, Health, LogLine, ModelsStatus, RunSnapshot, SourcePreview, SourceSpec, StageState, Summary } from "../types";
+-import { Bars, DataTable, LoadFailed, OutputsTab, ReviewTab, describeError } from "./tables";
++import type { Bucket, CsvSource, FinalizeResult, Health, LogLine, ModelsStatus, RunSnapshot, SourcePreview, SourceSpec, StageState, Summary } from "../types";
++import { Bars, DataTable, LoadFailed, OutputsTab, ReviewTab, Stat, describeError } from "./tables";
+ 
+ /**
+  * The pipeline page. One horizontal flow:
+@@ -1036,6 +1036,87 @@ function MasterProvenance({ run, client }: { run: RunSnapshot; client: EngineCli
+   );
+ }
+ 
++/** Suggested period label for a run: month + 2-digit year of when it ran, e.g. Oct26. */
++function defaultPeriod(run: RunSnapshot): string {
++  const d = new Date(run.finished_at ?? run.created_at ?? Date.now());
++  const mon = d.toLocaleString("en-GB", { month: "short" }).replace(/[^A-Za-z]/g, "");
++  return `${mon}${String(d.getFullYear()).slice(-2)}`;
++}
++
++/** Close the period: the reviewed mapping as Master Mapping_<period>.csv and the UCC file with
++ *  bank + Firm ID appended as ucc_<period>_enriched.csv, for downstream processing. */
++function FinalizePanel({ run, client, summary, unapplied }: { run: RunSnapshot; client: EngineClient; summary: Summary | null; unapplied: number }) {
++  const masterPath = run.source.type === "csv" ? run.source.master_path : "";
++  const [period, setPeriod] = useState(summary?.finalized?.period ?? defaultPeriod(run));
++  const [folder, setFolder] = useState(() => {
++    const prev = summary?.finalized?.master_file;
++    const base = prev ?? masterPath;
++    return base ? base.replace(/[\\/][^\\/]*$/, "") : "";
++  });
++  const [busy, setBusy] = useState(false);
++  const [msg, setMsg] = useState<string | null>(null);
++  const [result, setResult] = useState<FinalizeResult | null>(summary?.finalized ?? null);
++  const go = async () => {
++    const extra = unapplied ? ` ${unapplied} approved review row(s) not yet in the mapping will be added first.` : "";
++    if (!confirm(`Write Master Mapping_${period}.csv and ucc_${period}_enriched.csv to\n${folder}?${extra}`)) return;
++    setBusy(true);
++    setMsg(null);
++    try {
++      const r = await client.finalize(run.id, period, folder);
++      setResult(r);
++      setMsg(null);
++    } catch (e) {
++      setMsg(describeError(e));
++    } finally {
++      setBusy(false);
++    }
++  };
++  const fname = (p: string) => p.split(/[\\/]/).pop();
++  return (
++    <div>
++      <h4>Close the period</h4>
++      <p className="small muted" style={{ maxWidth: 760 }}>
++        Once the review is done, write the reviewed mapping as <code>Master Mapping_&lt;period&gt;.csv</code> and go back to the
++        UCC file to append <code>SECP_NAME_MAPPED</code>, <code>Firm_ID</code> and <code>mapping_source</code> to every filing
++        (<code>ucc_&lt;period&gt;_enriched.csv</code>). Every raw row and column is kept; filings with no mapping stay in with those columns blank.
++      </p>
++      <div className="row gap wrap">
++        <label className="small muted">Period</label>
++        <input style={{ width: 110 }} value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="Aug26" />
++        <label className="small muted">Folder</label>
++        <input className="grow" value={folder} onChange={(e) => setFolder(e.target.value)} placeholder="Folder that receives both files" />
++        {native.inTauri && (
++          <button className="btn" onClick={async () => { const p = await native.pickFolder("Folder for the period files"); if (p) setFolder(p); }}>Choose…</button>
++        )}
++        <button className="btn btn-primary" disabled={!period.trim() || !folder.trim() || busy} onClick={go}>
++          {busy ? "Writing…" : `Close ${period.trim() || "period"}`}
++        </button>
++      </div>
++      {result && (
++        <div className="finalized">
++          <p className="small">
++            <strong>{result.period}</strong> written {new Date(result.finalized_at).toLocaleString()}:{" "}
++            <button className="link" onClick={() => native.reveal(result.master_file)} title={result.master_file}>{fname(result.master_file)}</button>{" "}
++            ({result.master_rows.toLocaleString()} rows) ·{" "}
++            <button className="link" onClick={() => native.reveal(result.ucc_file)} title={result.ucc_file}>{fname(result.ucc_file)}</button>{" "}
++            ({result.ucc_rows.toLocaleString()} filings)
++          </p>
++          <div className="stats">
++            <Stat label="Filings mapped to a bank" value={result.mapped_rows} sub={pct(result.mapped_rows, result.ucc_rows)} />
++            <Stat label="With Firm ID" value={result.rows_with_firm_id} sub={pct(result.rows_with_firm_id, result.ucc_rows)} />
++            <Stat label="Unmapped (columns blank)" value={result.unmapped_rows} sub={pct(result.unmapped_rows, result.ucc_rows)} />
++          </div>
++        </div>
++      )}
++      {msg && <p className="small">{msg}</p>}
++    </div>
++  );
++}
++
++function pct(n: number, total: number): string {
++  return total ? `${((n / total) * 100).toFixed(1)}%` : "";
++}
++
+ function OutputsPanel({ run, client, summary, stages, logs }: {
+   run: RunSnapshot; client: EngineClient; summary: Summary | null; stages: StageState[]; logs: LogLine[];
+ }) {
+@@ -1096,6 +1177,7 @@ function OutputsPanel({ run, client, summary, stages, logs }: {
+         {unapplied ? <p className="small muted">{unapplied} approved review row(s) are not in the file yet — promoting adds them.</p> : null}
+         {msg && <p className="small">{msg}</p>}
+       </div>
++      <FinalizePanel run={run} client={client} summary={summary} unapplied={unapplied} />
+       {summary && (
+         <div>
+           <h4>Step timings</h4>
+diff --git a/engine/src/ucc_engine/api.py b/engine/src/ucc_engine/api.py
+index 8c287fd..1c4efd1 100644
+--- a/engine/src/ucc_engine/api.py
++++ b/engine/src/ucc_engine/api.py
+@@ -29,6 +29,11 @@ class PromoteRequest(BaseModel):
+     destination: str = Field(..., description="Path the updated master should overwrite (a backup is kept)")
+ 
+ 
++class FinalizeRequest(BaseModel):
++    period: str = Field(..., description="Period label used as the file suffix, e.g. Aug26")
++    folder: str = Field(..., description="Folder that receives Master Mapping_<period>.csv and ucc_<period>_enriched.csv")
++
++
+ class PreviewRequest(BaseModel):
+     source: SourceSpec = Field(..., discriminator="type")
+ 
+@@ -315,6 +320,14 @@ def create_app(store: Optional[RunStore] = None) -> FastAPI:
+         except FileNotFoundError as e:
+             raise HTTPException(404, str(e)) from e
+ 
++    @app.post("/runs/{run_id}/finalize")
++    def runs_finalize(run_id: str, req: FinalizeRequest) -> Dict[str, Any]:
++        """Write the reviewed mapping and the Firm-ID-enriched UCC file for a period."""
++        try:
++            return _get(run_id).finalize(period=req.period, folder=req.folder)
++        except (FileNotFoundError, ValueError) as e:
++            raise HTTPException(400 if isinstance(e, ValueError) else 404, str(e)) from e
++
+     return app
+ 
+ 
+diff --git a/engine/src/ucc_engine/runner.py b/engine/src/ucc_engine/runner.py
+index cca64fb..1d2a52e 100644
+--- a/engine/src/ucc_engine/runner.py
++++ b/engine/src/ucc_engine/runner.py
+@@ -9,6 +9,7 @@ from __future__ import annotations
+ import gc
+ import json
+ import math
++import re
+ import shutil
+ import threading
+ import time
+@@ -945,6 +946,87 @@ class PipelineRun:
+         self._persist()
+         return {"source": src, "destination": str(dest), "backup": str(backup) if backup else None}
+ 
++    def _raw_ucc_path(self) -> Optional[Path]:
++        """The UCC file this run was fed (the sampled copy when a sample was run)."""
++        for cand in (self.config.ucc_file, str(self.run_dir / "inputs" / "ucc.csv"),
++                     getattr(self.source.spec, "ucc_path", "")):
++            if cand and Path(cand).expanduser().is_file():
++                return Path(cand).expanduser()
++        return None
++
++    def finalize(self, *, period: str, folder: str) -> Dict[str, Any]:
++        """Close the period: write the reviewed mapping as ``Master Mapping_<period>.csv``
++        and the UCC file with ``SECP_NAME_MAPPED`` / ``Firm_ID`` appended as
++        ``ucc_<period>_enriched.csv``, both into ``folder``.
++
++        Unapplied approvals are applied first so the files carry every review
++        decision. The enrichment joins on the same key the matcher uses
++        (state pair + upper-cased, stripped filer name), one mapping per key,
++        and keeps every raw row and column; unmapped filings stay in the file
++        with the new columns blank.
++        """
++        period = re.sub(r"[^A-Za-z0-9_-]+", "", period.strip())
++        if not period:
++            raise ValueError("A period label is required, e.g. Aug26")
++        if self.decision_counts()["unapplied_approved"]:
++            self.apply_decisions()
++        src = self._latest("updated_master_*.csv", exclude="_with_source")
++        if not src:
++            raise FileNotFoundError("This run produced no updated_master_*.csv")
++        raw_path = self._raw_ucc_path()
++        if raw_path is None:
++            raise FileNotFoundError("The run's UCC file is no longer where it was; re-run with the current file")
++        from .datasources import detect_delimiter
++        from .core.pipeline_logic import _standardize_state_columns
++
++        dest = Path(folder).expanduser()
++        dest.mkdir(parents=True, exist_ok=True)
++        master_out = dest / f"Master Mapping_{period}.csv"
++        ucc_out = dest / f"ucc_{period}_enriched.csv"
++        if master_out.exists():
++            shutil.copy2(master_out, master_out.with_name(f"{master_out.stem}.backup_{datetime.now():%Y%m%d_%H%M%S}.csv"))
++        shutil.copy2(src, master_out)
++
++        master = pd.read_csv(master_out, encoding="latin-1", low_memory=False)
++        master = _standardize_state_columns(master)
++        with_src = self._master_with_source()
++        if with_src is not None and "_source" in with_src.columns and len(with_src) == len(master):
++            master["mapping_source"] = with_src["_source"].astype(str).values
++        key = lambda df: (df["DEBT_STATE"].astype("string").fillna("") + "|" + df["SECP_STATE"].astype("string").fillna("")
++                          + "|" + df["SECP_NAME"].astype("string").fillna("").str.strip().str.upper())
++        master["_key"] = key(master)
++        rhs_cols = ["_key", "SECP_NAME_MAPPED", "Firm ID"] + (["mapping_source"] if "mapping_source" in master.columns else [])
++        rhs = master[rhs_cols].drop_duplicates("_key", keep="first").rename(columns={"Firm ID": "Firm_ID"})
++
++        raw = pd.read_csv(raw_path, sep=detect_delimiter(str(raw_path)), encoding="latin-1", low_memory=False)
++        raw = raw.loc[:, ~raw.columns.astype(str).str.startswith("Unnamed:")]  # a saved pandas index
++        raw = raw.drop(columns=[c for c in ("SECP_NAME_MAPPED", "Firm_ID", "Firm ID", "mapping_source") if c in raw.columns])
++        missing = [c for c in ("DEBT_STATE", "SECP_STATE", "SECP_NAME") if c not in raw.columns]
++        if missing:
++            raise ValueError(f"UCC file is missing join column(s) {missing}")
++        raw_std = _standardize_state_columns(raw[["DEBT_STATE", "SECP_STATE", "SECP_NAME"]])
++        raw["_key"] = key(raw_std)
++        enriched = raw.merge(rhs, on="_key", how="left").drop(columns="_key")
++        fid = pd.to_numeric(enriched["Firm_ID"], errors="coerce")
++        if (fid.dropna() % 1 == 0).all():
++            enriched["Firm_ID"] = fid.astype("Int64")
++        enriched.to_csv(ucc_out, index=False)
++
++        n = int(len(enriched))
++        mapped = int(enriched["SECP_NAME_MAPPED"].notna().sum())
++        with_fid = int(enriched["Firm_ID"].notna().sum())
++        by_src = ({str(k): int(v) for k, v in enriched["mapping_source"].value_counts().items()}
++                  if "mapping_source" in enriched.columns else {})
++        result = {"period": period, "master_file": str(master_out), "ucc_file": str(ucc_out), "master_rows": int(len(master)),
++                  "ucc_rows": n, "mapped_rows": mapped, "rows_with_firm_id": with_fid, "unmapped_rows": n - mapped,
++                  "by_source": by_src, "finalized_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
++        self._log("INFO", f"Finalised {period}: {master_out.name} ({len(master):,} rows); {ucc_out.name}: "
++                          f"{mapped:,}/{n:,} filings mapped, {with_fid:,} with Firm ID")
++        if self.summary is not None:
++            self.summary["finalized"] = result
++        self._persist()
++        return result
++
+     # --------------------------------------------------------------- restore
+     @classmethod
+     def load(cls, run_dir: Path, decisions: Optional[DecisionStore] = None) -> Optional["PipelineRun"]:
+diff --git a/engine/tests/test_engine.py b/engine/tests/test_engine.py
+index bb2e362..eee6027 100644
+--- a/engine/tests/test_engine.py
++++ b/engine/tests/test_engine.py
+@@ -565,3 +565,34 @@ def test_stage_2b_matches_a_national_bank_across_state_pairs_into_review():
+     assert us["match_method"] == "Exact Match (Normalized - Other State)" and us["Firm_ID"] == 8
+     assert pd.isna(out.iloc[1]["SECP_NAME_MAPPED"]), "state-dependent names must not match across states"
+     assert pd.isna(out.iloc[2]["SECP_NAME_MAPPED"])
++
++
++def test_finalize_writes_dated_master_and_firm_id_enriched_ucc(tmp_path: Path):
++    """Closing a period writes Master Mapping_<period>.csv (reviewed) and the raw UCC file with
++    SECP_NAME_MAPPED / Firm_ID appended: every raw row and column kept, join on the matcher's
++    key (states + upper-cased name), pending approvals applied first."""
++    run = _fake_finished_run(tmp_path)
++    ucc = tmp_path / "u.csv"  # mixed case + extra columns + a pandas index column, like the real extract
++    ucc.write_text(",DEBT_STATE,SECP_STATE,SECP_NAME,FILING_NO\n"
++                   "0,fl,FL,Known,F1\n1,CA,CA,Acme Bk NA,F2\n2,CA,CA,Acme Bk NA,F3\n3,NY,NY,Nobody Inc,F4\n")
++    run.config.ucc_file = str(ucc)
++    k_acme = next(r["key"] for r in run.review()["rows"] if r["SECP_NAME"] == "ACME BK NA")
++    run.set_decisions([{"key": k_acme, "decision": "approved"}])
++    assert run.decision_counts()["unapplied_approved"] == 1
++
++    with pytest.raises(ValueError):
++        run.finalize(period="  ", folder=str(tmp_path / "out"))
++    res = run.finalize(period="Aug 26", folder=str(tmp_path / "out"))
++    assert res["period"] == "Aug26" and run.decision_counts()["unapplied_approved"] == 0
++    master = pd.read_csv(tmp_path / "out" / "Master Mapping_Aug26.csv")
++    assert master["SECP_NAME"].tolist() == ["KNOWN", "ACME BK NA"] and master["Firm ID"].tolist() == [5, 101]
++
++    out = pd.read_csv(tmp_path / "out" / "ucc_Aug26_enriched.csv")
++    assert list(out.columns) == ["DEBT_STATE", "SECP_STATE", "SECP_NAME", "FILING_NO", "SECP_NAME_MAPPED", "Firm_ID", "mapping_source"]
++    assert out["FILING_NO"].tolist() == ["F1", "F2", "F3", "F4"]  # one row per filing, order kept
++    assert out["SECP_NAME"].tolist() == ["Known", "Acme Bk NA", "Acme Bk NA", "Nobody Inc"]  # raw spelling untouched
++    assert out["SECP_NAME_MAPPED"].tolist()[:3] == ["Known", "Acme Bank", "Acme Bank"] and pd.isna(out["SECP_NAME_MAPPED"][3])
++    assert out["Firm_ID"].tolist()[:3] == [5, 101, 101] and pd.isna(out["Firm_ID"][3])
++    assert out["mapping_source"].tolist()[:3] == ["original_master", "reviewed_approved", "reviewed_approved"]
++    assert res == {**res, "ucc_rows": 4, "mapped_rows": 3, "rows_with_firm_id": 3, "unmapped_rows": 1}
++    assert run.summary["finalized"]["ucc_file"].endswith("ucc_Aug26_enriched.csv")
+-- 
+2.43.0
+

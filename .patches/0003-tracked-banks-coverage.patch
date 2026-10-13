@@ -1,0 +1,160 @@
+From 49403804df649303be4c5d3a56c11c47badef603 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 13 Oct 2026 11:36:24 +0100
+Subject: [PATCH] Tracked banks: cover every bank the master maps to (+21
+ banks, +10 master spellings); guard test
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Firm IDs come from the master's own rows (one id per bank, no clashes).
+Two master rows carried a Mac-Roman en dash in "Red River Bank ‚Äì Louisiana";
+they now use the tracked spelling. A test asserts master ‚äÜ tracked with
+matching Firm IDs so the two files can't drift apart silently.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01K5M7FnXPWrv7D7XYUXLqa1
+---
+ engine/tests/test_match_quality.py | 25 +++++++++++++++++
+ input/Master Mapping.csv           |  4 +--
+ input/tracked_banks.csv            | 45 +++++++++++++++++++++++++-----
+ 3 files changed, 65 insertions(+), 9 deletions(-)
+
+diff --git a/engine/tests/test_match_quality.py b/engine/tests/test_match_quality.py
+index c80ec21..2144f7c 100644
+--- a/engine/tests/test_match_quality.py
++++ b/engine/tests/test_match_quality.py
+@@ -140,3 +140,28 @@ def test_same_words_different_order_do_not_auto_match():
+     a, b = normalize_name("NATIONAL CITY BANK"), normalize_name("CITY NATIONAL BANK")
+     assert combined_fuzzy_score(a, b) < 85, "order-swapped bank names must not reach the review floor on fuzzy alone"
+     assert combined_fuzzy_score(a, a) == 100
++
++
++TRACKED = REPO / "input" / "tracked_banks.csv"
++
++
++@pytest.mark.skipif(not (MASTER.exists() and TRACKED.exists()), reason="input files not present")
++def test_every_master_bank_is_a_tracked_bank_with_the_same_firm_id():
++    """Every SECP_NAME_MAPPED in the master must resolve to a tracked bank (case-insensitive,
++    the lookup the enrichment stage uses) and carry the same Firm ID, so no mapped filing
++    is left without a Firm ID and the hand-mapping picker offers every bank the master uses."""
++    from ucc_engine.datasources import detect_delimiter
++
++    m = pd.read_csv(MASTER, encoding="latin-1", low_memory=False)
++    t = pd.read_csv(TRACKED, sep=detect_delimiter(str(TRACKED)), encoding="latin-1", dtype=str, keep_default_na=False)
++    id_col = "Firm_ID" if "Firm_ID" in t.columns else "Firm ID"
++    tracked = {n.strip().upper(): i.strip() for n, i in zip(t["Bank Name"], t[id_col])}
++    assert len(tracked) == len(t), "tracked bank names must be unique (case-insensitive)"
++
++    m["bank"] = m["SECP_NAME_MAPPED"].astype(str).str.strip().str.upper()
++    m["fid"] = pd.to_numeric(m["Firm ID"], errors="coerce").astype("Int64").astype(str)
++    missing = sorted(set(m["bank"]) - set(tracked))
++    assert not missing, f"master banks not in tracked_banks.csv: {missing}"
++    per_bank = m[m["fid"] != "<NA>"].groupby("bank")["fid"].agg(lambda s: sorted(set(s)))
++    clashes = {b: (ids, tracked[b]) for b, ids in per_bank.items() if ids != [tracked[b]]}
++    assert not clashes, f"Firm ID differs between master and tracked list: {clashes}"
+diff --git a/input/Master Mapping.csv b/input/Master Mapping.csv
+index 0fb30ba..a8762f9 100644
+--- a/input/Master Mapping.csv	
++++ b/input/Master Mapping.csv	
+@@ -29936,8 +29936,8 @@ OH,MA,The Provident Bank,Provident Bank,2586,
+ MN,MA,THE PROVIDENT BANK,Provident Bank,2586,
+ WY,MA,THE PROVIDENT BANK,Provident Bank,2586,
+ OH,OH,"THE PROVIDENT BANK, AS AGENT",Provident Bank,2586,
+-LA,LA,RED RIVER BANK,Red River Bank â€“ Louisiana,6110,
+-AR,LA,RED RIVER BANK,Red River Bank â€“ Louisiana,6110,
++LA,LA,RED RIVER BANK,Red River Bank - Louisiana,6110,
++AR,LA,RED RIVER BANK,Red River Bank - Louisiana,6110,
+ MS,AL,AMSOUTH BANK,Regions Bank,2665,
+ AL,AL,AMSOUTH BANK,Regions Bank,2665,
+ FL,AL,AMSOUTH BANK,Regions Bank,2665,
+diff --git a/input/tracked_banks.csv b/input/tracked_banks.csv
+index c9de5b1..15511c1 100644
+--- a/input/tracked_banks.csv
++++ b/input/tracked_banks.csv
+@@ -109,11 +109,11 @@ Carrollton Bank	6716
+ Carter Bank & Trust	4509
+ Cass Commercial Bank	725
+ CB&S Bank	6652
+-Centennial Bank 	5424
++Centennial Bank	5424
+ Centier Bank	742
+ Central Bank & Trust Co. (KY)	743
+ Central Bank and Trust Company (WY)	744
+-Central Bank - Utah 	6108
++Central Bank - Utah	6108
+ Central State Bank (AL)	7139
+ Central Trust Bank	747
+ Centreville Savings Bank	748
+@@ -125,10 +125,10 @@ Choiceone Financial Services	6712
+ CIB Bank	624
+ CIBC	628
+ Citi	804
+-Citizens Bank 	4841
++Citizens Bank	4841
+ Citizens Bank (MI)	805
+ Citizens Bank (OR)	806
+-Citizens Bank (RI)	#NA
++Citizens Bank (RI)	
+ Citizens Bank (TN, VA)	811
+ Citizens Banking Company (OH)	810
+ Citizens Business Bank (CA)	812
+@@ -343,7 +343,7 @@ Mascoma Savings Bank	4535
+ Mechanics Bank	2113
+ Mercantile Bank of Michigan	2134
+ Merchants Bank (VT)	2141
+-Merchants Bank, National Association	#NA
++Merchants Bank, National Association	
+ Meredith Village Savings Bank	4536
+ Meridian Bank NA	2149
+ Merrimack County Savings Bank	4537
+@@ -423,7 +423,7 @@ Prospect Capital Corp.	6257
+ Prosperity Bank	2581
+ Provident Bank	2586
+ Randolph-Brooks Federal Credit Union	2651
+-Red River Bank - Louisiana 	6110
++Red River Bank - Louisiana	6110
+ Redstone Federal Credit Union	2659
+ Regions Bank	2665
+ Reliabank Dakota	5972
+@@ -560,4 +560,35 @@ Wyoming Community Bank	5989
+ Wyoming State Bank	5990
+ Yadkin Valley Bank & Trust (NC)	4554
+ York Traditions Bank	5843
+-Zions Bank	3369
+\ No newline at end of file
++Zions Bank	3369
++Deutsche Bank	1058
++Sumitomo Mitsui Bank	2970
++Barclays	469
++Credit Suisse First Boston/CSFB	966
++Synovus	3007
++BNP Paribas	311
++Morgan Stanley	2230
++Monroe Capital	6753
++Umpqua Bank	3168
++Blackrock	522
++Alerus Financial	5337
++First Savings Bank (IN)	7156
++KBC Bank	1856
++SouthPoint Bank (AL)	7157
++CrossFirst Bank	7141
++Delta Community Credit Union	4491
++ENT Credit Union (CO)	7249
++Flagship Bank (FL)	7158
++Elevations Credit Union (CO)	7252
++Bank of Cleveland (TN)	7247
++Canvas Credit Union (CO)	7259
++Farm Credit Services of America	6545
++Ameris Bancorporation	4504
++Univest National Bank and Trust	5427
++Union Bank & Trust Company (NE)	4553
++Centennial Bank (AR)	5424
++Great Western Bancorporation (NE)	4527
++Midsouth Bancorp Inc, Lafayette	2175
++COMMUNITY BANK OF MISSISSIPPI	4500
++The Bank of San Antonio	7007
++Vystar Credit Union	4490
+-- 
+2.43.0
+

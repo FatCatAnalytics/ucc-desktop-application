@@ -1,0 +1,10 @@
+Tracked banks: cover every bank the master maps to (+21 banks, +10 master spellings); guard test
+
+Firm IDs come from the master's own rows (one id per bank, no clashes).
+Two master rows carried a Mac-Roman en dash in "Red River Bank – Louisiana";
+they now use the tracked spelling. A test asserts master ⊆ tracked with
+matching Firm IDs so the two files can't drift apart silently.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01K5M7FnXPWrv7D7XYUXLqa1
+
