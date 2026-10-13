@@ -1,0 +1,46 @@
+# Vendored copy of crates.io cfb 0.14.0 (MIT), library target only. Generated Cargo.toml trimmed.
+#
+# When uploading crates to the registry Cargo will automatically
+# "normalize" Cargo.toml files for maximal compatibility
+# with all versions of Cargo and also rewrite `path` dependencies
+# to registry (e.g., crates.io) dependencies.
+#
+# If you are reading this file be aware that the original Cargo.toml
+# will likely look very different (and much more reasonable).
+# See Cargo.toml.orig for the original contents.
+
+[package]
+edition = "2018"
+rust-version = "1.74"
+name = "cfb"
+version = "0.14.0"
+authors = ["Matthew D. Steele <mdsteele@alum.mit.edu>"]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Read/write Compound File Binary (structured storage) files"
+readme = "README.md"
+keywords = [
+    "cfb",
+    "storage",
+    "structured",
+]
+license = "MIT"
+repository = "https://github.com/mdsteele/rust-cfb"
+
+[lib]
+name = "cfb"
+path = "src/lib.rs"
+
+[dependencies.fnv]
+version = "1.0"
+
+[dependencies.uuid]
+version = "1"
+
+[dependencies.web-time]
+version = "1"
+
