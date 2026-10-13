@@ -1,0 +1,198 @@
+From b9196b4fbe4440e821991c9c092fe1eb7065723e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 13 Oct 2026 10:41:58 +0100
+Subject: [PATCH] Updated mapping: hand-picked banks get their own provenance
+ (mapped_by_hand), shown as a tab on the Outputs step
+
+Approving the pipeline's suggestion in review and picking a bank for an
+unmatched filer used to share one _source (reviewed_approved), so the
+Outputs step could not show which rows were mapped by hand. apply_decisions
+now tags decisions whose method starts with "Manual" as mapped_by_hand,
+keeps by_source in the run summary after an Add, and the provenance table
+re-reads when the run's updated-mapping file changes. The Add message says
+how many went in by hand vs approved in review.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01K5M7FnXPWrv7D7XYUXLqa1
+---
+ desktop/src/types.ts               |  1 +
+ desktop/src/views/PipelineView.tsx | 12 ++++++++----
+ engine/README.md                   |  2 +-
+ engine/src/ucc_engine/runner.py    | 31 +++++++++++++++++++++---------
+ engine/tests/test_engine.py        | 11 +++++++++--
+ 5 files changed, 41 insertions(+), 16 deletions(-)
+
+diff --git a/desktop/src/types.ts b/desktop/src/types.ts
+index 9af4a2a..a6686df 100644
+--- a/desktop/src/types.ts
++++ b/desktop/src/types.ts
+@@ -136,6 +136,7 @@ export interface Bank {
+ export interface ApplyResult {
+   approved: number;
+   added: number;
++  by_hand?: number;
+   file: string;
+   rows: number;
+   counts: DecisionCounts;
+diff --git a/desktop/src/views/PipelineView.tsx b/desktop/src/views/PipelineView.tsx
+index 53c44ff..cb2c648 100644
+--- a/desktop/src/views/PipelineView.tsx
++++ b/desktop/src/views/PipelineView.tsx
+@@ -854,7 +854,7 @@ function BucketPanel({ run, client, bucket, title, blurb }: { run: RunSnapshot;
+     setMsg(null);
+     try {
+       const r = await client.applyDecisions(run.id);
+-      setMsg(`Added ${r.added.toLocaleString()} approved / mapped row(s) to the updated mapping → ${r.file.split(/[\\/]/).pop()} (${r.rows.toLocaleString()} rows). Promote on the Outputs step to make it the master.`);
++      setMsg(`Added ${r.added.toLocaleString()} row(s) to the updated mapping (${(r.by_hand ?? 0).toLocaleString()} mapped by hand, ${(r.added - (r.by_hand ?? 0)).toLocaleString()} approved in review) → ${r.file.split(/[\\/]/).pop()} (${r.rows.toLocaleString()} rows). They are listed under "mapped by hand" / "approved in review" on the Outputs step; promote there to make it the master.`);
+       setTick((t) => t + 1);
+     } catch (e) {
+       setMsg(describeError(e));
+@@ -995,10 +995,12 @@ function MasterProvenance({ run, client }: { run: RunSnapshot; client: EngineCli
+         .catch((e) => { setPage(null); setLoadError(describeError(e)); });
+     }, 200);
+     return () => clearTimeout(t);
+-  }, [client, run.id, source, search, offset, open]);
++    // re-read when "Add approved / mapped" or Promote wrote a new file for this run
++  }, [client, run.id, source, search, offset, open, run.summary?.updated_master?.file]);
+   const label = (k: string) =>
+     k === "original_master" ? "came in as the mapping"
+-    : k === "reviewed_approved" ? "approved in review / mapped by hand"
++    : k === "mapped_by_hand" ? "mapped by hand"
++    : k === "reviewed_approved" ? "approved in review"
+     : k.startsWith("pipeline_") ? `pipeline · ${k.slice(9)}` : k;
+   const by = page?.by_source ?? {};
+   const added = Object.entries(by).filter(([k]) => k !== "original_master").sort((a, b) => b[1] - a[1]);
+@@ -1072,7 +1074,9 @@ function OutputsPanel({ run, client, summary, stages, logs }: {
+           <p>
+             {um.rows.toLocaleString()} rows = <strong>{um.original_rows.toLocaleString()} came in</strong> as the mapping +{" "}
+             <strong>{um.added_rows.toLocaleString()} added by the pipeline</strong> (direct + fuzzy · high probability)
+-            {um.approved_rows ? <> + <strong>{um.approved_rows.toLocaleString()} approved or mapped by hand</strong></> : null}
++            {um.by_source?.reviewed_approved ? <> + <strong>{um.by_source.reviewed_approved.toLocaleString()} approved in review</strong></> : null}
++            {um.by_source?.mapped_by_hand ? <> + <strong>{um.by_source.mapped_by_hand.toLocaleString()} mapped by hand</strong></> : null}
++            {um.approved_rows && !um.by_source ? <> + <strong>{um.approved_rows.toLocaleString()} approved or mapped by hand</strong></> : null}
+             . The existing mapping always wins on conflicts.
+           </p>
+         ) : <p className="muted">Not produced.</p>}
+diff --git a/engine/README.md b/engine/README.md
+index 7313a5d..35902e2 100644
+--- a/engine/README.md
++++ b/engine/README.md
+@@ -68,7 +68,7 @@ lead-bank files) and `run.json` (status, timings, summary, log tail).
+ | `POST /runs/{id}/propagate-decisions` | inherit decisions made on the same filer name elsewhere |
+ | `GET /runs/{id}/review` | paged review queue (`confidence`, `search`, `method`, `decision` = `pending`/`approved`/`rejected`, `offset`, `limit`); each row carries its `key` and current decision |
+ | `GET/PUT /runs/{id}/decisions` | read / record review decisions: `{items: [{key, decision: "approved"\|"rejected"\|null, mapped_name?, firm_id?}]}` |
+-| `POST /runs/{id}/apply-decisions` | append approved rows to a fresh `updated_master_<ts>.csv` (`_source = reviewed_approved`) |
++| `POST /runs/{id}/apply-decisions` | append reviewer rows to a fresh `updated_master_<ts>.csv` (`_source = reviewed_approved` for approved suggestions, `mapped_by_hand` for banks picked for unmatched filers) |
+ | `GET /decisions` | the decisions database across all runs (`decision`, `search`, `run_id`, `offset`, `limit`) |
+ | `POST /decisions/clear` | `{keys: [...]}` – undo decisions (they become "to decide" again) |
+ | `GET /decisions/history?key=` | audit log for one key |
+diff --git a/engine/src/ucc_engine/runner.py b/engine/src/ucc_engine/runner.py
+index add9bc3..cca64fb 100644
+--- a/engine/src/ucc_engine/runner.py
++++ b/engine/src/ucc_engine/runner.py
+@@ -34,6 +34,16 @@ REVIEW_COLUMNS = [
+     "ambiguous_master_candidates", "Firm_ID", "cluster_id", "cluster_label", "cluster_size",
+     "suggested_mapping", "suggestion_score", "suggestion_confidence", "alternative_suggestions",
+ ]
++# ``_source`` values a reviewer (not the pipeline) puts into the updated master.
++REVIEWER_SOURCES = ("reviewed_approved", "mapped_by_hand")
++
++
++def decision_source(d: Dict[str, Any]) -> str:
++    """Provenance tag for an approved decision: a bank the reviewer picked for an
++    unmatched filer is ``mapped_by_hand``; approving the pipeline's suggestion
++    (incl. decisions inherited from one) is ``reviewed_approved``."""
++    return "mapped_by_hand" if str(d.get("match_method") or "").startswith("Manual") else "reviewed_approved"
++
+ BUCKETS = ("direct", "fuzzy_high", "review", "unmatched")
+ BUCKET_LABELS = {
+     "direct": "Direct match",
+@@ -377,7 +387,7 @@ class PipelineRun:
+                 "rows": int(len(um)),
+                 "original_rows": int(src.eq("original_master").sum()),
+                 "added_rows": int(src.str.startswith("pipeline_").sum()),
+-                "approved_rows": int(src.eq("reviewed_approved").sum()),
++                "approved_rows": int(src.isin(REVIEWER_SOURCES).sum()),
+                 "by_source": {str(k): int(v) for k, v in src.value_counts().items()},
+                 "file": self._latest("updated_master_*.csv", exclude="_with_source"),
+             }
+@@ -831,19 +841,21 @@ class PipelineRun:
+         base = self._master_with_source()
+         if base is None:
+             raise FileNotFoundError("This run has no updated master to extend")
+-        base = base[~base.get("_source", pd.Series("", index=base.index)).astype(str).eq("reviewed_approved")]
++        base = base[~base.get("_source", pd.Series("", index=base.index)).astype(str).isin(REVIEWER_SOURCES)]
+         approved = self.decisions.approved()
+         new = pd.DataFrame([{
+             "DEBT_STATE": d["debt_state"], "SECP_STATE": d["secp_state"], "SECP_NAME": d["secp_name"],
+             "SECP_NAME_MAPPED": d["mapped_name"] or d["suggested"], "Firm ID": d["firm_id"],
+-            "_source": "reviewed_approved",
++            "_source": decision_source(d),
+         } for d in approved], columns=list(MASTER_COLUMNS) + ["_source"])
+         combined = pd.concat([base, new], ignore_index=True, sort=False)
+         combined = combined.drop_duplicates(subset=list(MASTER_KEY), keep="first").reset_index(drop=True)
+         fid = pd.to_numeric(combined["Firm ID"], errors="coerce")  # keep the master's integer formatting
+         if (fid.dropna() % 1 == 0).all():
+             combined["Firm ID"] = fid.astype("Int64")
+-        added = int(combined["_source"].astype(str).eq("reviewed_approved").sum())
++        src = combined["_source"].astype(str)
++        added = int(src.isin(REVIEWER_SOURCES).sum())
++        by_hand = int(src.eq("mapped_by_hand").sum())
+ 
+         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+         out = self.output_dir / f"updated_master_{ts}.csv"
+@@ -855,20 +867,21 @@ class PipelineRun:
+         combined.to_csv(self.output_dir / f"updated_master_{ts}_with_source.csv", index=False)
+         self._cache["updated_master_data"] = combined
+         self._cache.pop("updated_master_keys", None)
+-        self._log("INFO", f"Applied review decisions: {added:,} approved rows added -> {out.name} "
+-                          f"({len(approved) - added:,} already present under the same key)")
++        self._log("INFO", f"Applied review decisions: {added:,} rows added -> {out.name} "
++                          f"({added - by_hand:,} approved in review, {by_hand:,} mapped by hand; "
++                          f"{len(approved) - added:,} already present under the same key)")
+         if self.summary is not None:
+-            src = combined["_source"].astype(str)
+             self.summary["updated_master"] = {
+                 "rows": int(len(combined)),
+                 "original_rows": int(src.eq("original_master").sum()),
+                 "added_rows": int(src.str.startswith("pipeline_").sum()),
+                 "approved_rows": added,
++                "by_source": {str(k): int(v) for k, v in src.value_counts().items()},
+                 "file": str(out),
+             }
+         self._persist()
+-        return {"approved": len(approved), "added": added, "file": str(out), "rows": int(len(combined)),
+-                "counts": self.decision_counts()}
++        return {"approved": len(approved), "added": added, "by_hand": by_hand, "file": str(out),
++                "rows": int(len(combined)), "counts": self.decision_counts()}
+ 
+     def clusters(self, *, search: str = "", min_size: int = 1, offset: int = 0, limit: int = 100) -> Dict[str, Any]:
+         """New-entity clusters (Stage 5-7) summarised one row per cluster."""
+diff --git a/engine/tests/test_engine.py b/engine/tests/test_engine.py
+index 28b6993..06ae0ff 100644
+--- a/engine/tests/test_engine.py
++++ b/engine/tests/test_engine.py
+@@ -521,11 +521,18 @@ def test_manual_mapping_of_unmatched_rows(tmp_path: Path):
+ 
+     # manual mappings reach the updated master and the provenance view shows them as added
+     res = run.apply_decisions()
+-    assert res["added"] == 3
++    assert res["added"] == 3 and res["by_hand"] == 3
+     prov = run.master_rows(source="added")
+-    assert prov["total"] == 3 and prov["by_source"] == {"original_master": 1, "reviewed_approved": 3}
++    # hand-picked banks (incl. the inherited spelling variant) carry their own provenance, distinct
++    # from approving a pipeline suggestion in review
++    assert prov["total"] == 3 and prov["by_source"] == {"original_master": 1, "mapped_by_hand": 3}
++    assert run.master_rows(source="mapped_by_hand")["total"] == 3
+     assert run.master_rows(source="original")["total"] == 1
+     assert {r["SECP_NAME_MAPPED"] for r in prov["rows"]} == {"JPMorgan", "US Bank"}
++    assert run.summary["updated_master"]["by_source"]["mapped_by_hand"] == 3
++    assert run.summary["updated_master"]["approved_rows"] == 3
++    # applying again replaces, not duplicates, the reviewer's rows
++    assert run.apply_decisions()["added"] == 3 and run.master_rows(source="added")["total"] == 3
+ 
+ 
+ def test_stage_2b_matches_a_national_bank_across_state_pairs_into_review():
+-- 
+2.43.0
+
