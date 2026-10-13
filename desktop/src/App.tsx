@@ -105,12 +105,12 @@ export default function App() {
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-mark">UCC</span>
-          <span className="brand-text">Mapping pipeline</span>
+          <span className="brand-mark" aria-hidden>UCC</span>
+          <span className="brand-text">Bank mapping</span>
         </div>
         <button className={`btn wide ${!selected && view === "pipeline" ? "btn-primary" : ""}`}
           onClick={() => { setSelected(null); setView("pipeline"); }}>
-          + New run
+          New run
         </button>
         <div className="runs-list">
           {runs.length === 0 && <p className="muted small">No runs yet.</p>}
@@ -125,10 +125,10 @@ export default function App() {
             >
               <span className={`dot ${r.status}`} />
               <span className="run-name">{r.name}</span>
-              <span className="muted small">
-                {r.status === "running" ? `${Math.round(r.progress * 100)}%` : r.status}
-                {r.sample_rows ? ` · sample ${r.sample_rows.toLocaleString()}` : ""}
-                {r.summary?.buckets ? ` · ${r.summary.buckets.review.toLocaleString()} to review` : ""}
+              <span className="run-meta">
+                <span className={`run-status ${r.status}`}>{r.status === "running" ? `running ${Math.round(r.progress * 100)}%` : r.status}</span>
+                {r.sample_rows ? <span>sample {r.sample_rows.toLocaleString()}</span> : null}
+                {r.summary?.buckets ? <span>{r.summary.buckets.review.toLocaleString()} to review</span> : null}
               </span>
               {r.status !== "running" && r.status !== "queued" && (
                 <button type="button" className="run-delete" title="Delete this run" aria-label={`Delete run ${r.name}`}
@@ -139,12 +139,13 @@ export default function App() {
         </div>
         <button className={`nav-item ${view === "decisions" ? "active" : ""}`} onClick={() => setView("decisions")}>
           <span>Decisions</span>
-          <span className="muted small">
-            {health?.decisions ? `${health.decisions.approved.toLocaleString()} approved · ${health.decisions.rejected.toLocaleString()} rejected` : "—"}
+          <span className="nav-meta">
+            {health?.decisions ? `${health.decisions.approved.toLocaleString()} approved, ${health.decisions.rejected.toLocaleString()} rejected` : "—"}
           </span>
         </button>
-        <footer className="sidebar-footer muted small">
-          engine v{health?.version} · {health?.backends.fastembed ? "fastembed" : "sentence-transformers"} · local CPU
+        <footer className="sidebar-footer">
+          <span>Engine {health?.version}</span>
+          <span>Models run locally ({health?.backends.fastembed ? "fastembed" : "sentence-transformers"})</span>
         </footer>
       </aside>
 

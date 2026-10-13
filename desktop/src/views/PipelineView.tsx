@@ -274,11 +274,17 @@ export function PipelineView({ client, health, run, onStarted, onUpdate, onNewRu
       <header className="page-head row between">
         <div>
           <h1>{run ? run.name : "New mapping run"}</h1>
-          <p className="muted">
-            {run
-              ? `${run.status.toUpperCase()}${active ? ` · ${pct}%` : ""}${run.input_rows.ucc ? ` · ${run.input_rows.ucc.toLocaleString()} UCC rows` : ""}${run.input_rows.master ? ` · ${run.input_rows.master.toLocaleString()} mapping rows` : ""}${run.sample_rows ? ` · sample of ${run.sample_rows.toLocaleString()}` : ""}${summary ? ` · ${summary.total_seconds}s` : ""}`
-              : "Drop the latest UCC file and the current enriched mapping onto the first step, then start the pipeline."}
-          </p>
+          {run ? (
+            <ul className="facts" aria-label="Run summary">
+              <li><span className={`status-pill ${run.status}`}>{run.status}{active ? ` ${pct}%` : ""}</span></li>
+              {run.input_rows.ucc ? <li><b>{run.input_rows.ucc.toLocaleString()}</b> UCC filings</li> : null}
+              {run.input_rows.master ? <li><b>{run.input_rows.master.toLocaleString()}</b> mapping rows</li> : null}
+              {run.sample_rows ? <li>sample of <b>{run.sample_rows.toLocaleString()}</b></li> : null}
+              {summary ? <li><b>{summary.total_seconds}</b> s</li> : null}
+            </ul>
+          ) : (
+            <p className="muted">Drop the latest UCC file and the current enriched mapping onto the first step, then start the pipeline.</p>
+          )}
         </div>
         <div className="row gap">
           {run && active && (
@@ -291,7 +297,7 @@ export function PipelineView({ client, health, run, onStarted, onUpdate, onNewRu
           )}
           {!run && (
             <button className="btn btn-primary" disabled={!ready || busy !== "" || !!health?.active_run} onClick={doStart}>
-              {busy === "start" ? "Starting…" : "▶ Run pipeline"}
+              {busy === "start" ? "Starting…" : "Run pipeline"}
             </button>
           )}
         </div>
@@ -302,7 +308,7 @@ export function PipelineView({ client, health, run, onStarted, onUpdate, onNewRu
 
       {/* ------------------------------------------------------------ flow */}
       <div className="flow">
-        <FlowNode id="ingest" title="1 · Ingest" status={st.ingest} selected={panel === "ingest"} onClick={() => choose("ingest")}
+        <FlowNode id="ingest" step={1} title="Ingest" status={st.ingest} selected={panel === "ingest"} onClick={() => choose("ingest")}
           seconds={nodeSeconds(stages, NODE_STAGES.ingest)}>
           <div className="dropzones">
             {SLOTS.map((s) => (
@@ -316,14 +322,14 @@ export function PipelineView({ client, health, run, onStarted, onUpdate, onNewRu
 
         <Arrow />
 
-        <FlowNode id="direct" title="2 · Direct match" status={st.direct} selected={panel === "direct"} onClick={() => choose("direct")}
+        <FlowNode id="direct" step={2} title="Direct match" status={st.direct} selected={panel === "direct"} onClick={() => choose("direct")}
           seconds={nodeSeconds(stages, NODE_STAGES.direct)} count={buckets?.direct} sub={share(buckets?.direct)}>
           <p className="node-desc">Exact on the filed name, then on the normalised name (suffixes, roles, abbreviations stripped).</p>
         </FlowNode>
 
         <Arrow />
 
-        <FlowNode id="fuzzy" title="3 · Fuzzy match" status={st.fuzzy} selected={panel === "fuzzy"} onClick={() => choose("fuzzy")}
+        <FlowNode id="fuzzy" step={3} title="Fuzzy match" status={st.fuzzy} selected={panel === "fuzzy"} onClick={() => choose("fuzzy")}
           seconds={nodeSeconds(stages, NODE_STAGES.fuzzy)}
           count={buckets ? buckets.fuzzy_high + buckets.review : undefined} sub={buckets ? "candidates scored" : undefined}>
           <p className="node-desc">Token-level string similarity, then embedding + multi-signal scoring for what's left. Every candidate gets a probability.</p>
@@ -334,7 +340,7 @@ export function PipelineView({ client, health, run, onStarted, onUpdate, onNewRu
         <div className="fanout">
           <FlowNode id="fuzzy_high" tone="good" title="High probability" status={bucketStatus} selected={panel === "fuzzy_high"}
             onClick={() => choose("fuzzy_high")} count={buckets?.fuzzy_high} sub={share(buckets?.fuzzy_high)}>
-            <p className="node-desc">Classified <em>fuzzy match · high probability</em>. Accepted automatically and added to the updated mapping.</p>
+            <p className="node-desc">Classified <em>fuzzy match, high probability</em>. Accepted automatically and added to the updated mapping.</p>
           </FlowNode>
           <FlowNode id="review" tone="warn" title="Review" status={bucketStatus} selected={panel === "review"}
             onClick={() => choose("review")} count={buckets?.review} sub={share(buckets?.review)}>
@@ -348,7 +354,7 @@ export function PipelineView({ client, health, run, onStarted, onUpdate, onNewRu
 
         <Arrow />
 
-        <FlowNode id="outputs" title="4 · Outputs" status={st.outputs} selected={panel === "outputs"} onClick={() => choose("outputs")}
+        <FlowNode id="outputs" step={4} title="Outputs" status={st.outputs} selected={panel === "outputs"} onClick={() => choose("outputs")}
           seconds={nodeSeconds(stages, NODE_STAGES.outputs)}
           count={summary?.updated_master?.rows} sub={summary?.updated_master ? "rows in updated mapping" : undefined}>
           <p className="node-desc">Updated mapping, Firm-ID enriched filings, lead-bank file. Promote the mapping when you're happy.</p>
@@ -381,7 +387,7 @@ export function PipelineView({ client, health, run, onStarted, onUpdate, onNewRu
             bands={summary?.review_bands} />
         )}
         {panel === "fuzzy_high" && run && (
-          <BucketPanel run={run} client={client} bucket="fuzzy_high" title="Fuzzy match · high probability"
+          <BucketPanel run={run} client={client} bucket="fuzzy_high" title="Fuzzy match, high probability"
             blurb="Above the auto threshold (fuzzy ≥ fuzzy_auto_threshold, embedding ≥ embed_auto_threshold). These are added to the updated mapping without review — spot-check before promoting." />
         )}
         {panel === "review" && run && (
@@ -438,16 +444,17 @@ function useNativeDragDrop(enabled: boolean, onDrop: (paths: string[], slot: Slo
 }
 
 // ============================================================================
-function FlowNode({ id, title, status, selected, onClick, seconds, count, sub, tone, children }: {
-  id: NodeId; title: string; status: NodeStatus; selected: boolean; onClick: () => void;
+function FlowNode({ id, step, title, status, selected, onClick, seconds, count, sub, tone, children }: {
+  id: NodeId; step?: number; title: string; status: NodeStatus; selected: boolean; onClick: () => void;
   seconds?: number | null; count?: number; sub?: string; tone?: "good" | "warn" | "muted"; children?: React.ReactNode;
 }) {
   return (
-    <button type="button" className={`node ${status} ${selected ? "selected" : ""} ${tone ?? ""}`} data-node={id} onClick={onClick}>
+    <button type="button" className={`node ${status} ${selected ? "selected" : ""} ${tone ?? ""}`} data-node={id} onClick={onClick}
+      aria-current={selected ? "step" : undefined}>
       <div className="node-head">
-        <span className={`dot ${status === "done" ? "done" : status === "running" ? "running" : status === "failed" ? "failed" : ""}`} />
+        {step != null ? <span className="node-step">{step}</span> : <span className={`node-branch ${tone ?? ""}`} aria-hidden />}
         <span className="node-title">{title}</span>
-        <span className="muted small node-time">{seconds != null ? `${seconds.toFixed(1)}s` : status === "running" ? "running…" : ""}</span>
+        <span className="node-time">{seconds != null ? `${seconds.toFixed(1)}s` : status === "running" ? "running" : status === "failed" ? "failed" : ""}</span>
       </div>
       {count != null && (
         <div className="node-count">
@@ -474,7 +481,7 @@ function DropZone({ slot, title, hint, required, path, hovering, editable, statu
     <div className={`dropzone ${path ? "filled" : ""} ${hovering ? "hover" : ""} ${editable ? "" : "readonly"} ${bad ? "bad" : ok ? "ok" : ""}`}
       data-slot={editable ? slot : undefined} onClick={(e) => { e.stopPropagation(); if (editable && !path) onBrowse(); }}>
       <div className="dz-title">
-        {title}{required ? "" : <span className="muted"> · optional</span>}
+        {title}{required ? "" : <span className="muted"> (optional)</span>}
       </div>
       {path ? (<>
         <div className="dz-file" title={path}>
@@ -489,7 +496,7 @@ function DropZone({ slot, title, hint, required, path, hovering, editable, statu
         {(status?.rows != null || bad) && (
           <div className="dz-meta small">
             {status?.rows != null && <span className="muted">{status.rows.toLocaleString()} rows</span>}
-            {bad && <span className="bad"> · {status?.error ?? `missing ${status?.missing_columns?.join(", ")}`}</span>}
+            {bad && <span className="bad"> — {status?.error ?? `missing ${status?.missing_columns?.join(", ")}`}</span>}
           </div>
         )}
       </>) : native.inTauri || !editable ? (
@@ -516,8 +523,8 @@ function IngestPanel(p: {
     ["fuzzy_review_threshold", "Fuzzy score at or above which a match goes to review."],
     ["fuzzy_min_threshold", "Floor: below this a fuzzy candidate is dropped (unmatched)."],
     ["embed_auto_threshold", "Embedding composite (0–1) for high probability (auto)."],
-    ["embed_high_threshold", "Embedding composite for review · high."],
-    ["embed_medium_threshold", "Floor for review · medium; below it is unmatched."],
+    ["embed_high_threshold", "Embedding composite for review (high)."],
+    ["embed_medium_threshold", "Floor for review (medium); below it is unmatched."],
   ];
   const modelSettings: Array<[key: string, hint: string]> = [
     ["model_dir", "Read the models in place from this folder instead of copying (local path or share). Overrides the network folder."],
@@ -535,7 +542,7 @@ function IngestPanel(p: {
           <input value={p.name} onChange={(e) => p.setName(e.target.value)} placeholder="e.g. October refresh" />
         </label>
         <label className="field inline-field">
-          <span>Quick test · random sample (0 = all rows)</span>
+          <span>Quick test: random sample (0 = all rows)</span>
           <input type="number" min={0} step={1000} value={p.sample} onChange={(e) => p.setSample(Number(e.target.value) || 0)} />
         </label>
       </div>
@@ -601,7 +608,7 @@ function InputPreviews({ preview }: { preview: SourcePreview | null }) {
               <span className="input-title">{s.title}</span>
               <span className="input-file" title={x.path}>{x.path ? basename(x.path) : ""}</span>
               <span className="muted small input-meta">
-                {x.rows != null ? `${x.rows.toLocaleString()} rows` : ""}{x.size_bytes ? ` · ${mb(x.size_bytes)}` : ""}{cols.length ? ` · ${cols.length} columns` : ""}
+                {x.rows != null ? `${x.rows.toLocaleString()} rows` : ""}{x.size_bytes ? `, ${mb(x.size_bytes)}` : ""}{cols.length ? `, ${cols.length} columns` : ""}
               </span>
               <span className={`pill ${ok ? "approved" : "rejected"}`}>
                 {x.error ? "cannot read" : missing.length ? `missing ${missing.join(", ")}` : "ready"}
@@ -621,8 +628,8 @@ function InputPreviews({ preview }: { preview: SourcePreview | null }) {
                     </tbody>
                   </table>
                   <div className="muted small" style={{ padding: "6px 10px" }}>
-                    First {x.preview?.length ?? 0} of {x.rows?.toLocaleString()} rows · <strong>bold</strong> columns are the ones the pipeline uses
-                    {x.path ? <> · <span className="mono">{x.path}</span></> : null}
+                    First {x.preview?.length ?? 0} of {x.rows?.toLocaleString()} rows; <strong>bold</strong> columns are the ones the pipeline uses
+                    {x.path ? <> <span className="mono">{x.path}</span></> : null}
                   </div>
                 </div>
               )
@@ -678,7 +685,7 @@ function ModelsCard({ client, share, setShare, overrides }: {
     setErr(null);
     try {
       const r = await client.prefetchModels(overrides);
-      setMsg(`Models ready in ${r.location} · ${r.embedding} · ${r.reranker}`);
+      setMsg(`Models ready in ${r.location}: ${r.embedding}, ${r.reranker}`);
       setTick((t) => t + 1);
     } catch (e) {
       setErr(describeError(e));
@@ -717,9 +724,9 @@ function ModelsCard({ client, share, setShare, overrides }: {
       </div>
       {status && (
         <p className="small muted" style={{ margin: 0 }}>
-          {share ? (shareOk ? `Network folder reachable · ${status.share_models.length} model(s)` : "Network folder not reachable from this PC") : "No network folder set"}
-          {" · "}local folder {status.local}: {status.local_models.length ? status.local_models.map((m) => m.replace(/^models--/, "")).join(", ") : "empty"}
-          {status.last_synced ? ` · last copied ${status.last_synced.replace("T", " ")}` : ""}
+          {share ? (shareOk ? `Network folder reachable, ${status.share_models.length} model(s)` : "Network folder not reachable from this PC") : "No network folder set"}
+          {". "}Local folder {status.local}: {status.local_models.length ? status.local_models.map((m) => m.replace(/^models--/, "")).join(", ") : "empty"}
+          {status.last_synced ? `. Last copied ${status.last_synced.replace("T", " ")}` : ""}
         </p>
       )}
       {msg && <p className="small" style={{ margin: 0 }}>{msg}</p>}
@@ -743,14 +750,14 @@ function StagePanel({ title, stages, logs, run, methods, total, bands }: {
   return (
     <div className="split">
       <div>
-        <h4>{title} · steps</h4>
+        <h4>{title}: steps</h4>
         {stages.map((s) => (
           <div key={s.name} className={`stage ${s.status}`}>
             <span className={`dot ${s.status}`} />
             <span className="stage-label">{s.label}</span>
             <span className="muted small">
               {s.status === "done" && s.seconds != null ? `${s.seconds.toFixed(1)}s` : ""}
-              {s.rows != null ? ` · ${s.rows.toLocaleString()} rows` : ""}
+              {s.rows != null ? `  ${s.rows.toLocaleString()} rows` : ""}
               {s.status === "running" ? "running…" : s.status === "skipped" ? "skipped" : ""}
             </span>
           </div>
@@ -830,7 +837,7 @@ function BucketPanel({ run, client, bucket, title, blurb }: { run: RunSnapshot; 
     try {
       const r = await client.setDecisions(run.id, [{ key, decision: "approved", mapped_name: bank, all_states: allStates }]);
       const inh = r.inherited.approved;
-      setMsg(`Mapped → ${bank}${inh ? ` · ${inh} more filer(s) with the same name inherited it` : ""}. It goes into the updated mapping with “Add approved”.`);
+      setMsg(`Mapped to ${bank}${inh ? `; ${inh} more filer(s) with the same name inherited it` : ""}. It goes into the updated mapping with “Add approved”.`);
       setTick((t) => t + 1);
     } catch (e) {
       setMsg(describeError(e));
@@ -918,7 +925,7 @@ function BucketPanel({ run, client, bucket, title, blurb }: { run: RunSnapshot; 
             </div>
             {page && (
               <div className="row between small">
-                <span className="muted">{page.total.toLocaleString()} filers · showing {Math.min(offset + 1, page.total)}–{Math.min(offset + limit, page.total)} · sorted by number of filings</span>
+                <span className="muted">{page.total.toLocaleString()} filers, showing {Math.min(offset + 1, page.total)}–{Math.min(offset + limit, page.total)}, sorted by number of filings</span>
                 <div className="row gap">
                   <button className="btn" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}>‹ Prev</button>
                   <button className="btn" disabled={offset + limit >= page.total} onClick={() => setOffset(offset + limit)}>Next ›</button>
@@ -967,7 +974,7 @@ function ManualRow({ row: r, run, busy, banks, onMap, onUndo }: {
         {decided ? (
           <div className="row gap">
             <span className="pill approved" title={inherited ? `inherited from ${str(r.decision_source).slice(10)}` : r.decided_in_run && r.decided_in_run !== run.id ? `mapped in run ${str(r.decided_in_run)}` : undefined}>
-              mapped{inherited ? " · inherited" : r.decided_in_run && r.decided_in_run !== run.id ? " · earlier run" : ""}{r.decided_firm_id != null ? ` · Firm ID ${str(r.decided_firm_id)}` : ""}
+              mapped{inherited ? " (inherited)" : r.decided_in_run && r.decided_in_run !== run.id ? " (earlier run)" : ""}{r.decided_firm_id != null ? `, Firm ID ${str(r.decided_firm_id)}` : ""}
             </span>
             <button className="link small" disabled={busy} onClick={() => onUndo(key)}>undo</button>
           </div>
@@ -1001,7 +1008,7 @@ function MasterProvenance({ run, client }: { run: RunSnapshot; client: EngineCli
     k === "original_master" ? "came in as the mapping"
     : k === "mapped_by_hand" ? "mapped by hand"
     : k === "reviewed_approved" ? "approved in review"
-    : k.startsWith("pipeline_") ? `pipeline · ${k.slice(9)}` : k;
+    : k.startsWith("pipeline_") ? `pipeline: ${k.slice(9)}` : k;
   const by = page?.by_source ?? {};
   const added = Object.entries(by).filter(([k]) => k !== "original_master").sort((a, b) => b[1] - a[1]);
   return (
@@ -1097,7 +1104,7 @@ function FinalizePanel({ run, client, summary, unapplied }: { run: RunSnapshot; 
           <p className="small">
             <strong>{result.period}</strong> written {new Date(result.finalized_at).toLocaleString()}:{" "}
             <button className="link" onClick={() => native.reveal(result.master_file)} title={result.master_file}>{fname(result.master_file)}</button>{" "}
-            ({result.master_rows.toLocaleString()} rows) ·{" "}
+            ({result.master_rows.toLocaleString()} rows) and{" "}
             <button className="link" onClick={() => native.reveal(result.ucc_file)} title={result.ucc_file}>{fname(result.ucc_file)}</button>{" "}
             ({result.ucc_rows.toLocaleString()} filings)
           </p>
@@ -1154,7 +1161,7 @@ function OutputsPanel({ run, client, summary, stages, logs }: {
         {um ? (
           <p>
             {um.rows.toLocaleString()} rows = <strong>{um.original_rows.toLocaleString()} came in</strong> as the mapping +{" "}
-            <strong>{um.added_rows.toLocaleString()} added by the pipeline</strong> (direct + fuzzy · high probability)
+            <strong>{um.added_rows.toLocaleString()} added by the pipeline</strong> (direct + fuzzy, high probability)
             {um.by_source?.reviewed_approved ? <> + <strong>{um.by_source.reviewed_approved.toLocaleString()} approved in review</strong></> : null}
             {um.by_source?.mapped_by_hand ? <> + <strong>{um.by_source.mapped_by_hand.toLocaleString()} mapped by hand</strong></> : null}
             {um.approved_rows && !um.by_source ? <> + <strong>{um.approved_rows.toLocaleString()} approved or mapped by hand</strong></> : null}

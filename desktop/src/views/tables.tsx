@@ -27,7 +27,7 @@ export function Bars({ data, total, unit = "" }: { data: Record<string, number>;
           <div className="bar"><div style={{ width: `${(v / max) * 100}%` }} /></div>
           <span className="bar-val">
             {unit === "s" ? `${v.toFixed(1)}s` : v.toLocaleString()}
-            {total && unit !== "s" ? <span className="muted"> · {((v / total) * 100).toFixed(1)}%</span> : null}
+            {total && unit !== "s" ? <span className="muted"> {((v / total) * 100).toFixed(1)}%</span> : null}
           </span>
         </div>
       ))}
@@ -89,7 +89,7 @@ export function ReviewTab({ run, client }: { run: RunSnapshot; client: EngineCli
       const r = await client.setDecisions(run.id, items);
       setEdits((e) => { const n = { ...e }; items.forEach((i) => delete n[i.key]); return n; });
       const inh = r.inherited.approved + r.inherited.rejected;
-      if (inh) setMsg(`${r.changed} decided · ${inh} more inherited the same decision (same filer name in another state pair or spelling).`);
+      if (inh) setMsg(`${r.changed} decided; ${inh} more inherited the same decision (same filer name in another state pair or spelling).`);
       refresh();
     } catch (e) {
       setMsg(describeError(e));
@@ -122,7 +122,7 @@ export function ReviewTab({ run, client }: { run: RunSnapshot; client: EngineCli
       if (items.length) {
         const r = await client.setDecisions(run.id, items);
         const inh = r.inherited.approved + r.inherited.rejected;
-        setMsg(`Approved ${items.length} → ${bank}${inh ? ` · ${inh} more inherited` : ""}.`);
+        setMsg(`Approved ${items.length} as ${bank}${inh ? `; ${inh} more inherited` : ""}.`);
       }
       refresh();
     } catch (e) {
@@ -199,7 +199,7 @@ export function ReviewTab({ run, client }: { run: RunSnapshot; client: EngineCli
             busy={busy} edits={edits} setEdits={setEdits} decide={decide} />
           {page && (
             <div className="row between small">
-              <span className="muted">{page.total.toLocaleString()} rows · showing {Math.min(offset + 1, page.total)}–{Math.min(offset + limit, page.total)}</span>
+              <span className="muted">{page.total.toLocaleString()} rows, showing {Math.min(offset + 1, page.total)}–{Math.min(offset + limit, page.total)}</span>
               <div className="row gap">
                 <button className="btn" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}>‹ Prev</button>
                 <button className="btn" disabled={offset + limit >= page.total} onClick={() => setOffset(offset + limit)}>Next ›</button>
@@ -226,7 +226,7 @@ function BankGroup({ run, client, group: g, filter, search, busy, edits, setEdit
       .then((p) => { setPage(p); setLoadError(null); })
       .catch((e) => { setPage(null); setLoadError(describeError(e)); });
   }, [client, run.id, g.mapped_name, filter, search, open, tick]);
-  const methods = Object.entries(g.methods).map(([k, v]) => `${k.replace(" (Cross-Encoder Rerank)", " · reranked")} ${v}`).join(", ");
+  const methods = Object.entries(g.methods).map(([k, v]) => `${k.replace(" (Cross-Encoder Rerank)", " (reranked)")} ${v}`).join(", ");
   return (
     <section className={`bank-group ${open ? "open" : ""}`}>
       <div className="bank-head" onClick={() => setOpen((o) => !o)}>
@@ -234,8 +234,8 @@ function BankGroup({ run, client, group: g, filter, search, busy, edits, setEdit
         <span className="bank-name">{g.mapped_name || <em className="muted">no suggestion</em>}</span>
         <span className="muted small">{g.firm_id != null ? `Firm ID ${g.firm_id}` : "no Firm ID"}</span>
         <span className="bank-stats small">
-          <strong>{g.keys}</strong> filer{g.keys === 1 ? "" : "s"} · {g.filings.toLocaleString()} filing{g.filings === 1 ? "" : "s"}
-          <span className="muted"> · {methods} · score {num(g.min_score)}–{num(g.max_score)}</span>
+          <strong>{g.keys}</strong> filer{g.keys === 1 ? "" : "s"}, {g.filings.toLocaleString()} filing{g.filings === 1 ? "" : "s"}
+          <span className="muted">. {methods}. Scores {num(g.min_score)}–{num(g.max_score)}</span>
         </span>
         {g.pending > 0 && (
           <button className="btn ok" disabled={busy !== ""} onClick={(e) => { e.stopPropagation(); approveBank(g.mapped_name); }}>
@@ -260,7 +260,7 @@ function ReviewRows({ run, rows, loading, loadError, onRetry, busy, edits, setEd
       <table className="table review">
         <thead>
           <tr>
-            <th>Secured party (as filed)</th><th>States</th><th>Suggested mapping</th><th>Method · score</th><th>Firm ID</th><th>Decision</th>
+            <th>Secured party (as filed)</th><th>States</th><th>Suggested mapping</th><th>Method / score</th><th>Firm ID</th><th>Decision</th>
           </tr>
         </thead>
         <tbody>
@@ -290,8 +290,8 @@ function ReviewRows({ run, rows, loading, loadError, onRetry, busy, edits, setEd
                   ) : null}
                 </td>
                 <td className="small">
-                  <div>{str(r.match_method).replace(" (Cross-Encoder Rerank)", " · reranked")}</div>
-                  <div className="muted">{num(r.match_score)} · {str(r.confidence).replace("REVIEW_", "")}</div>
+                  <div>{str(r.match_method).replace(" (Cross-Encoder Rerank)", " (reranked)")}</div>
+                  <div className="muted">{num(r.match_score)} {str(r.confidence).replace("REVIEW_", "").toLowerCase()}</div>
                 </td>
                 <td className="small">
                   {str(decision ? r.decided_firm_id : r.Firm_ID) || (
@@ -303,7 +303,7 @@ function ReviewRows({ run, rows, loading, loadError, onRetry, busy, edits, setEd
                     <div className="row gap">
                       <span className={`pill ${decision}`}
                         title={inherited ? `inherited from ${str(r.decision_source).slice(10)}` : r.decided_in_run && r.decided_in_run !== run.id ? `decided in run ${str(r.decided_in_run)}` : undefined}>
-                        {decision}{inherited ? " · inherited" : r.decided_in_run && r.decided_in_run !== run.id ? " · earlier run" : ""}
+                        {decision}{inherited ? " (inherited)" : r.decided_in_run && r.decided_in_run !== run.id ? " (earlier run)" : ""}
                       </span>
                       <button className="link small" disabled={busy !== ""} onClick={() => decide([{ key, decision: null }])}>undo</button>
                     </div>
@@ -365,7 +365,7 @@ export function DataTable({ page, cols, offset, limit, setOffset }: { page: Page
         </table>
       </div>
       <div className="row between small">
-        <span className="muted">{page.total.toLocaleString()} rows · showing {offset + 1}–{Math.min(offset + limit, page.total)}</span>
+        <span className="muted">{page.total.toLocaleString()} rows, showing {offset + 1}–{Math.min(offset + limit, page.total)}</span>
         <div className="row gap">
           <button className="btn" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}>‹ Prev</button>
           <button className="btn" disabled={offset + limit >= page.total} onClick={() => setOffset(offset + limit)}>Next ›</button>

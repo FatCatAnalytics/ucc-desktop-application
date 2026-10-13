@@ -108,7 +108,7 @@ export function DecisionsView({ client, health, runs, onOpenRun }: Props) {
         <table className="table decisions">
           <thead>
             <tr>
-              <th>Decided</th><th>Secured party (as filed)</th><th>States</th><th>Decision</th><th>Mapped name</th><th>Firm ID</th><th>Method · score</th><th>Run</th><th></th>
+              <th>Decided</th><th>Secured party (as filed)</th><th>States</th><th>Decision</th><th>Mapped name</th><th>Firm ID</th><th>Method / score</th><th>Run</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -126,7 +126,7 @@ export function DecisionsView({ client, health, runs, onOpenRun }: Props) {
                 <td className="small">{d.firm_id ?? <span className="muted">—</span>}</td>
                 <td className="small">
                   <div>{d.match_method ?? ""}</div>
-                  <div className="muted">{d.match_score != null ? d.match_score.toFixed(3) : ""}{d.confidence ? ` · ${d.confidence.replace("REVIEW_", "")}` : ""}</div>
+                  <div className="muted">{d.match_score != null ? d.match_score.toFixed(3) : ""}{d.confidence ? ` ${d.confidence.replace("REVIEW_", "").toLowerCase()}` : ""}</div>
                 </td>
                 <td className="small">
                   {d.run_id && runs.some((r) => r.id === d.run_id)
@@ -147,7 +147,7 @@ export function DecisionsView({ client, health, runs, onOpenRun }: Props) {
       </div>
       {page && page.total > 0 && (
         <div className="row between small">
-          <span className="muted">{page.total.toLocaleString()} decisions · showing {Math.min(offset + 1, page.total)}–{Math.min(offset + LIMIT, page.total)}</span>
+          <span className="muted">{page.total.toLocaleString()} decisions, showing {Math.min(offset + 1, page.total)}–{Math.min(offset + LIMIT, page.total)}</span>
           <div className="row gap">
             <button className="btn" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - LIMIT))}>‹ Prev</button>
             <button className="btn" disabled={offset + LIMIT >= page.total} onClick={() => setOffset(offset + LIMIT)}>Next ›</button>
