@@ -121,7 +121,7 @@ The `PipelineConfig` class extends Dagster's `ConfigurableResource` and centrali
 |-----------|---------|-------------|
 | `ucc_file` | `Inputs/ucc.csv` | Path to UCC filings (resolved from project root) |
 | `master_file` | `Inputs/Master Mapping.csv` | Path to master mapping table |
-| `universe_file` | `Inputs/Universe.csv` | Path to tracked bank Firm ID table |
+| `universe_file` | `input/tracked_banks.csv` | Path to tracked bank Firm ID table (`Bank Name`, `Firm ID` or `Firm_ID`) |
 | `output_dir` | `Outputs` | Directory for all output files |
 | `embedding_model` | `models/bge-small-en-v1.5` | Local path to the SentenceTransformer model |
 

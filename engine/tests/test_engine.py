@@ -150,8 +150,9 @@ def _fake_finished_run(tmp_path: Path, name: str = "t", suggestions: dict | None
     from ucc_engine.datasources import CsvSourceSpec
     from ucc_engine.runner import PipelineRun
 
-    universe = tmp_path / "universe.csv"
-    universe.write_text("Bank Name,Firm ID\nAcme Bank,101\nZeta Bank,202\n")
+    # tracked_banks.csv shape: tab-separated, "Firm_ID" header, "#NA" for an unknown id
+    universe = tmp_path / "tracked_banks.csv"
+    universe.write_text("Bank Name\tFirm_ID\nAcme Bank\t101\nZeta Bank\t202\nNo Id Bank\t#NA\n")
     spec = CsvSourceSpec(ucc_path=str(tmp_path / "u.csv"), master_path=str(tmp_path / "m.csv"), universe_path=str(universe))
     run = PipelineRun(spec, PipelineConfig(), runs_root=tmp_path / "runs", name=name)
     run.config.universe_file = str(universe)

@@ -11,7 +11,7 @@ Required columns
 UCC filings   : DEBT_STATE, SECP_STATE, SECP_NAME   (+ optional filing-type /
                 debtor-name columns used by the lead-bank stage)
 Master mapping: DEBT_STATE, SECP_STATE, SECP_NAME, SECP_NAME_MAPPED, "Firm ID"
-Universe      : "Bank Name", "Firm ID"
+Tracked banks : "Bank Name", "Firm ID" (or "Firm_ID")
 """
 from __future__ import annotations
 
@@ -27,6 +27,12 @@ from pydantic import BaseModel, Field
 UCC_REQUIRED = ["DEBT_STATE", "SECP_STATE", "SECP_NAME"]
 MASTER_REQUIRED = UCC_REQUIRED + ["SECP_NAME_MAPPED", "Firm ID"]
 UNIVERSE_REQUIRED = ["Bank Name", "Firm ID"]
+# Columns that satisfy a required one under another spelling (tracked_banks.csv says Firm_ID).
+COLUMN_ALIASES = {"Firm ID": ("Firm_ID",)}
+
+
+def _has(cols, c: str) -> bool:
+    return c in cols or any(a in cols for a in COLUMN_ALIASES.get(c, ()))
 
 _ENCODING = "latin-1"  # what the core reads with
 
@@ -36,7 +42,7 @@ class CsvSourceSpec(BaseModel):
     type: Literal["csv"] = "csv"
     ucc_path: str = Field(..., description="UCC filings CSV")
     master_path: str = Field(..., description="Master Mapping CSV")
-    universe_path: str = Field("", description="Universe / tracked banks CSV (optional)")
+    universe_path: str = Field("", description="Tracked banks CSV: Bank Name + Firm ID (optional)")
 
 
 class SqlSourceSpec(BaseModel):
@@ -64,7 +70,7 @@ class DataSourceError(RuntimeError):
 
 
 def _require(df: pd.DataFrame, cols: list[str], what: str) -> None:
-    missing = [c for c in cols if c not in df.columns]
+    missing = [c for c in cols if not _has(df.columns, c)]
     if missing:
         raise DataSourceError(f"{what}: missing required column(s) {missing}; have {list(df.columns)}")
 
@@ -115,7 +121,7 @@ class CsvDataSource:
                     "size_bytes": p.stat().st_size,
                     "rows": _count_rows(str(p)),
                     "columns": cols,
-                    "missing_columns": [c for c in required if c not in cols],
+                    "missing_columns": [c for c in required if not _has(cols, c)],
                     "preview": head.fillna("").astype(str).to_dict(orient="records"),
                 }
             except Exception as e:  # noqa: BLE001
@@ -192,7 +198,7 @@ class SqlDataSource:
                 cols = [str(c) for c in head.columns]
                 out["inputs"][name] = {
                     "present": True, "columns": cols,
-                    "missing_columns": [c for c in required if c not in cols],
+                    "missing_columns": [c for c in required if not _has(cols, c)],
                     "preview": head.fillna("").astype(str).to_dict(orient="records"),
                 }
             except Exception as e:  # noqa: BLE001

@@ -113,7 +113,7 @@ export class EngineClient {
     return this.req<Page>(`/runs/${id}/clusters?${p}`);
   };
 
-  /** Banks a filer can be mapped to by hand (Universe + the master's banks). */
+  /** Banks a filer can be mapped to by hand (tracked banks + the master's banks). */
   banks = (id: string) => this.req<Bank[]>(`/runs/${id}/banks`);
   /** The updated master with provenance: what came in vs what was added. */
   masterRows = (id: string, q: { source?: string; search?: string; offset?: number; limit?: number }) => {

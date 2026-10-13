@@ -2033,14 +2033,15 @@ def our_universe_data(
             },
         )
 
+    # "Firm ID" (Universe.csv) and "Firm_ID" (tracked_banks.csv) are the same column.
     df = pd.read_csv(
         config.universe_file,
         sep=_detect_delimiter(config.universe_file),
         encoding="latin-1",
-        usecols=["Bank Name", "Firm ID"],
-        dtype={"Firm ID": "Int64"},
+        usecols=lambda c: c in ("Bank Name", "Firm ID", "Firm_ID"),
     ).drop_duplicates()
     df = df.rename(columns={"Bank Name": "SECP_NAME", "Firm ID": "Firm_ID"})
+    df["Firm_ID"] = pd.to_numeric(df["Firm_ID"], errors="coerce").astype("Int64")
 
     df = df[df["SECP_NAME"].notna() & (df["SECP_NAME"].str.strip() != "")]
     df = df.reset_index(drop=True)

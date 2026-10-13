@@ -5,7 +5,7 @@ them with Firm IDs, and produces the updated mapping and lead-bank outputs - as 
 desktop app (Windows, built on macOS) with everything running locally.
 
 ```
-input/     UCC filings, the current (enriched) Master Mapping, the bank Universe
+input/     UCC filings, the current (enriched) Master Mapping, the tracked banks (Bank Name + Firm ID)
 output/    runs, updated mappings, the review-decisions database        (not in git)
 models/    local copy of the two matching models; deployed from a network share (not in git)
 engine/    Python matching engine + local HTTP API (the app's sidecar; also a CLI)
@@ -39,7 +39,7 @@ uv pip install --python .venv/bin/python -e ".[dev,sql,build]"
 cd ../desktop && npm install && npm run app:dev
 ```
 
-Drop `input/ucc.csv`, `input/Master Mapping.csv` and `input/Universe.csv` onto
+Drop `input/ucc.csv`, `input/Master Mapping.csv` and `input/tracked_banks.csv` onto
 the Ingest step (or any three CSVs), then *Run pipeline*. The first run needs
 the models: click *Download models* (internet) or set the network model folder.
 

@@ -295,7 +295,7 @@ function ReviewRows({ run, rows, loading, loadError, onRetry, busy, edits, setEd
                 </td>
                 <td className="small">
                   {str(decision ? r.decided_firm_id : r.Firm_ID) || (
-                    <span className="muted" title={decision === "approved" ? "Corrected name not found in the Universe – Firm ID left blank" : undefined}>—</span>
+                    <span className="muted" title={decision === "approved" ? "Corrected name not found in the tracked banks – Firm ID left blank" : undefined}>—</span>
                   )}
                 </td>
                 <td>

@@ -31,7 +31,7 @@ type NodeStatus = "idle" | "pending" | "running" | "done" | "failed";
 const SLOTS: Array<{ slot: Slot; field: keyof Omit<CsvSource, "type">; title: string; hint: string; required: boolean }> = [
   { slot: "ucc", field: "ucc_path", title: "UCC filings", hint: "latest ucc.csv", required: true },
   { slot: "master", field: "master_path", title: "Enriched mapping", hint: "latest Master Mapping.csv", required: true },
-  { slot: "universe", field: "universe_path", title: "Universe", hint: "tracked banks + Firm IDs (optional)", required: false },
+  { slot: "universe", field: "universe_path", title: "Tracked banks", hint: "Bank Name + Firm ID (optional)", required: false },
 ];
 
 /** Which engine stages roll up into which pipeline node (clustering stages are never shown). */
@@ -55,7 +55,7 @@ function basename(p: string) {
 function guessSlot(path: string): Slot {
   const n = basename(path).toLowerCase();
   if (/master|mapping|enrich/.test(n)) return "master";
-  if (/universe|bank|firm/.test(n)) return "universe";
+  if (/universe|tracked|bank|firm/.test(n)) return "universe";
   return "ucc";
 }
 
@@ -891,7 +891,7 @@ function BucketPanel({ run, client, bucket, title, blurb }: { run: RunSnapshot; 
       {manual && (
         <div className="row between wrap decision-bar">
           <span className="small muted">
-            Know the bank? Pick it from the Universe and <em>Map</em>. Tick <em>all states</em> when the filer name is that bank everywhere
+            Know the bank? Pick it from the tracked banks and <em>Map</em>. Tick <em>all states</em> when the filer name is that bank everywhere
             (JPMORGAN CHASE BANK); leave it off for generic names that differ by state (PINNACLE BANK). Mapped filers are remembered for later runs
             and go into the updated mapping with the button on the right.
           </span>
