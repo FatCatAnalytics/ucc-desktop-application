@@ -220,9 +220,11 @@ def create_app(store: Optional[RunStore] = None) -> FastAPI:
         limit: int = Query(100, ge=1, le=1000),
         sort: str = "match_score",
         descending: bool = True,
+        decision: Literal["", "pending", "mapped"] = "",
     ) -> Dict[str, Any]:
-        """Read-only page of one result bucket (direct / fuzzy_high / review / unmatched)."""
-        return _get(run_id).rows(bucket=bucket, search=search, offset=offset, limit=limit, sort=sort, descending=descending)
+        """A page of one result bucket (direct / fuzzy_high / review / unmatched), decisions attached."""
+        return _get(run_id).rows(bucket=bucket, search=search, offset=offset, limit=limit, sort=sort,
+                                 descending=descending, decision=decision)
 
     # ----------------------------------------------------- review decisions
     @app.get("/runs/{run_id}/decisions")

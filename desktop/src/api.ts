@@ -94,13 +94,14 @@ export class EngineClient {
   };
 
   /** Read-only page of one result bucket. */
-  rows = (id: string, q: { bucket: Bucket; search?: string; offset?: number; limit?: number }) => {
+  rows = (id: string, q: { bucket: Bucket; search?: string; decision?: "pending" | "mapped"; offset?: number; limit?: number }) => {
     const p = new URLSearchParams();
     p.set("bucket", q.bucket);
     if (q.search) p.set("search", q.search);
+    if (q.decision) p.set("decision", q.decision);
     p.set("offset", String(q.offset ?? 0));
     p.set("limit", String(q.limit ?? 100));
-    return this.req<Page>(`/runs/${id}/rows?${p}`);
+    return this.req<Page & { mapped_total?: number }>(`/runs/${id}/rows?${p}`);
   };
 
   clusters = (id: string, q: { search?: string; min_size?: number; offset?: number; limit?: number }) => {

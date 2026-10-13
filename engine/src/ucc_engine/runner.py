@@ -442,15 +442,23 @@ class PipelineRun:
         limit: int = 100,
         sort: str = "match_score",
         descending: bool = True,
+        decision: str = "",
     ) -> Dict[str, Any]:
-        """Page the result rows of one bucket (see ``bucket_series``). Read-only view;
-        the ``review`` bucket has its own endpoint with decisions attached."""
+        """Page the result rows of one bucket (see ``bucket_series``) with any decisions
+        attached. ``decision`` = ``pending`` (nothing decided) / ``mapped`` (a decision
+        exists) narrows the page; the ``review`` bucket has its own endpoint."""
         if bucket not in BUCKETS:
             raise KeyError(f"unknown bucket {bucket!r}; expected one of {BUCKETS}")
         df = self._enriched()
         if df is None:
-            return {"total": 0, "offset": offset, "limit": limit, "columns": BUCKET_COLUMNS, "rows": []}
+            return {"total": 0, "offset": offset, "limit": limit, "columns": BUCKET_COLUMNS, "rows": [], "mapped_total": 0}
         sub = self._bucket_rows(df, bucket)
+        decided_all = self.decisions.get_many(sub["key"])
+        mapped_total = int(sub["key"].isin(decided_all.keys()).sum())
+        if decision == "pending":
+            sub = sub[~sub["key"].isin(decided_all.keys())]
+        elif decision == "mapped":
+            sub = sub[sub["key"].isin(decided_all.keys())]
         if search:
             s = search.strip()
             mask = sub["SECP_NAME"].astype(str).str.contains(s, case=False, na=False, regex=False)
@@ -474,7 +482,7 @@ class PipelineRun:
             row["decision_source"] = d.get("source") if d else None
             row["decided_in_run"] = d.get("run_id") if d else None
         return {"total": int(len(sub)), "offset": offset, "limit": limit, "columns": cols + ["decision"],
-                "rows": rows, "decision_counts": self.decision_counts()}
+                "rows": rows, "decision_counts": self.decision_counts(), "mapped_total": mapped_total}
 
     def _bucket_rows(self, df: pd.DataFrame, bucket: str) -> pd.DataFrame:
         """One row per key in a bucket, with ``key`` and ``filings`` (how many filings share it)."""

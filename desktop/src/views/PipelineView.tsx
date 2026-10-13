@@ -800,20 +800,20 @@ function LogBox({ lines, active }: { lines: LogLine[]; active: boolean }) {
 function BucketPanel({ run, client, bucket, title, blurb }: { run: RunSnapshot; client: EngineClient; bucket: Bucket; title: string; blurb: string }) {
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
-  const [page, setPage] = useState<import("../types").Page | null>(null);
+  const [page, setPage] = useState<(import("../types").Page & { mapped_total?: number }) | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const [banks, setBanks] = useState<import("../types").Bank[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [hideMapped, setHideMapped] = useState(false);
+  const [show, setShow] = useState<"pending" | "mapped" | "all">("pending");
   const limit = 100;
   const finished = run.status === "succeeded";
   const manual = bucket === "unmatched";
   useEffect(() => {
     if (!finished) return;
     const t = setTimeout(() => {
-      client.rows(run.id, { bucket, search, offset, limit })
+      client.rows(run.id, { bucket, search, offset, limit, decision: manual && show !== "all" ? show : undefined })
         .then((p) => { setPage(p); setLoadError(null); })
         .catch((e) => { setPage(null); setLoadError(describeError(e)); });
     }, 200);
@@ -849,12 +849,26 @@ function BucketPanel({ run, client, bucket, title, blurb }: { run: RunSnapshot; 
       setBusy(false);
     }
   };
+  const apply = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await client.applyDecisions(run.id);
+      setMsg(`Added ${r.added.toLocaleString()} approved / mapped row(s) to the updated mapping → ${r.file.split(/[\\/]/).pop()} (${r.rows.toLocaleString()} rows). Promote on the Outputs step to make it the master.`);
+      setTick((t) => t + 1);
+    } catch (e) {
+      setMsg(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const cols = manual
     ? ["SECP_NAME", "DEBT_STATE", "SECP_STATE", "SECP_NAME_NORMALIZED"]
     : ["SECP_NAME", "SECP_NAME_MAPPED", "matched_master_raw", "DEBT_STATE", "SECP_STATE", "match_method", "match_score", "confidence", "Firm_ID"];
-  const rows = (page?.rows ?? []).filter((r) => !(hideMapped && r.decision));
+  const rows = page?.rows ?? [];
   const counts = page?.decision_counts;
+  const mappedHere = page?.mapped_total ?? 0;
   return (
     <>
       <div className="row between wrap">
@@ -863,17 +877,28 @@ function BucketPanel({ run, client, bucket, title, blurb }: { run: RunSnapshot; 
           <p className="small muted" style={{ maxWidth: 720 }}>{blurb}</p>
         </div>
         <div className="row gap">
-          {manual && <label className="chip"><input type="checkbox" checked={hideMapped} onChange={(e) => setHideMapped(e.target.checked)} /> hide mapped</label>}
+          {manual && (
+            <div className="seg small">
+              {([["pending", "To map"], ["mapped", `Mapped by hand${mappedHere ? ` (${mappedHere.toLocaleString()})` : ""}`], ["all", "All"]] as const).map(([v, l]) => (
+                <button key={v} className={show === v ? "on" : ""} onClick={() => { setOffset(0); setShow(v); }}>{l}</button>
+              ))}
+            </div>
+          )}
           <input style={{ maxWidth: 360 }} placeholder="Search secured party / normalised name…" value={search}
             onChange={(e) => { setOffset(0); setSearch(e.target.value); }} />
         </div>
       </div>
       {manual && (
-        <p className="small muted" style={{ margin: 0 }}>
-          Know the bank? Pick it from the Universe and <em>Map</em>. Tick <em>all states</em> when the filer name is that bank everywhere
-          (JPMORGAN CHASE BANK); leave it off for generic names that differ by state (PINNACLE BANK). Mapped filers are remembered for later runs.
-          {counts?.unapplied_approved ? ` ${counts.unapplied_approved} approved/mapped row(s) are not yet in the updated mapping — use “Add approved” on the Review step or promote.` : ""}
-        </p>
+        <div className="row between wrap decision-bar">
+          <span className="small muted">
+            Know the bank? Pick it from the Universe and <em>Map</em>. Tick <em>all states</em> when the filer name is that bank everywhere
+            (JPMORGAN CHASE BANK); leave it off for generic names that differ by state (PINNACLE BANK). Mapped filers are remembered for later runs
+            and go into the updated mapping with the button on the right.
+          </span>
+          <button className="btn btn-primary" disabled={busy || !counts?.unapplied_approved} onClick={apply}>
+            {`Add ${(counts?.unapplied_approved ?? 0).toLocaleString()} approved / mapped to updated mapping`}
+          </button>
+        </div>
       )}
       {msg && <p className="small">{msg}</p>}
       {loadError && !page
